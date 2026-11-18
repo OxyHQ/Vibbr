@@ -17,6 +17,13 @@ Nothing here has been applied. Each item is an action outside this repo, in orde
 
 ## 2. Infra (oxy-infra, reviewed with a `terraform plan`)
 
+Phase 1 is written and committed locally on branch `feat/vibbr-infra` of `oxy-infra` (worktree
+`~/Oxy/worktrees/oxy-infra-vibbr`, one commit ahead of `origin/main`, not pushed, nothing applied): the ECR
+repository, the task and deploy roles and the `api.vibbr.co` certificate. `terraform validate`, `fmt` and the
+455 Python tests pass. The service module waits for the first image digest and is in
+`docs/runbooks/vibbr-launch.md` there.
+
+
 Per Schedio: an ECR repository and its reviewed-image pin, an ECS service and task definition (task role
 with the Oxy workload binding), an ALB host rule for `api.vibbr.co`, a deploy role for GitHub OIDC, the
 database, SSM parameters (`DATABASE_URL`, `TICKET_CODE_SECRET`), alarms, and a Workers Static Assets project
