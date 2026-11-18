@@ -11,6 +11,17 @@ A lightweight event attachment inside a post: `EventEditor` in the composer, `ap
 the `event_updated`/`event_cancelled` notifications, `packages/contracts/src/events.ts`, and event rows in the
 account-erasure map and the channel-deletion manifest. It has no tickets, payments or organizers.
 
+## The pattern to follow: Homiio case references
+
+Mention already shares another product's entity by id: a post carries `homiioCase` (a `caseId`), stored in
+`posts.content_homiio_case_id`, sanitized by `sanitizeHomiioCase` in `@mention/shared-types/homiio`, carried
+through `createPost`/`createThread`/`updatePost`, `postRepository`, `PostHydrationService` and `postVariants`,
+and rendered by `HomiioCaseCard` through `lib/references/homiioCases` (see `docs/homiio-reference-cards.md`
+and `docs/reference-card-sdks.md`). 73 files mention it, most of them tests. A Vibbr event reference is the
+same shape with `vibbrEvent: { eventId }` and `lib/references/vibbrEvents` reading `@vibbr.co/sdk`; copy that
+pattern layer by layer, including its column, its sanitizer, its tests and its docs, rather than inventing a
+second one. Measured 2026-11-18 on `origin/main` (a06650ca2).
+
 ## Two changes, in this order (expand, then contract)
 
 Mention's own migration rules say a destructive change ships in a release AFTER the one that stops reading
