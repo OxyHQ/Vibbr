@@ -23,5 +23,8 @@
   },
   "devDependencies": {
     "@types/bun": "catalog:"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
