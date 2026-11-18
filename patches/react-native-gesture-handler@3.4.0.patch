@@ -1,0 +1,67 @@
+diff --git a/lib/module/handlers/gestures/reanimatedWrapper.js b/lib/module/handlers/gestures/reanimatedWrapper.js
+index dca5aa532401743172dafc000d3ccc836fcdc2fe..1623f18c6089e28aba3f1502dc303f6de66a575f 100644
+--- a/lib/module/handlers/gestures/reanimatedWrapper.js
++++ b/lib/module/handlers/gestures/reanimatedWrapper.js
+@@ -1,8 +1,12 @@
+ "use strict";
+ 
+-import { tagMessage } from '../../utils';
+ import { installUIRuntimeBindings } from './installUIRuntimeBindings';
+-let Reanimated;
++// Mention patch: the Reanimated members Gesture Handler reads, imported by
++// name. The upstream `require('react-native-reanimated')` (Reanimated as an
++// optional peer) hands the bundler the whole module, so Metro's tree shaking
++// keeps every Reanimated export in the web startup chunk. Worklets keeps its
++// upstream optional require. See patches/README.md.
++import Animated, { isSharedValue, NativeEventsManager, setGestureState, useComposedEventHandler, useEvent, useHandler, useSharedValue } from 'react-native-reanimated';
+ let Worklets;
+ try {
+   // eslint-disable-next-line @typescript-eslint/no-var-requires
+@@ -11,25 +15,19 @@ try {
+   // When 'react-native-worklets' is not available we want to quietly continue
+   Worklets = undefined;
+ }
+-try {
+-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+-  Reanimated = require('react-native-reanimated');
+-} catch (e) {
+-  // When 'react-native-reanimated' is not available we want to quietly continue
+-  // @ts-ignore TS demands the variable to be initialized
+-  Reanimated = undefined;
+-}
++const Reanimated = {
++  default: Animated,
++  isSharedValue,
++  NativeEventsManager,
++  setGestureState,
++  useComposedEventHandler,
++  useEvent,
++  useHandler,
++  useSharedValue
++};
+ if (Worklets !== undefined) {
+   installUIRuntimeBindings(Worklets.getUIRuntimeHolder);
+ }
+-if (Reanimated !== undefined && !Reanimated.setGestureState) {
+-  // The loaded module is Reanimated but it doesn't have the setGestureState defined
+-  Reanimated.setGestureState = () => {
+-    'worklet';
+-
+-    console.warn(tagMessage('Please use newer version of react-native-reanimated in order to control state of the gestures.'));
+-  };
+-}
+ 
+ // Reanimated resolves `getAnimatableRef()` once, when its ref to the wrapped
+ // component attaches. Only versions that re-resolve it on update (their
+@@ -42,7 +40,10 @@ try {
+   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+   const AnimatedComponent =
+   // eslint-disable-next-line @typescript-eslint/no-var-requires, @typescript-eslint/no-unsafe-member-access
+-  require('react-native-reanimated/src/createAnimatedComponent/AnimatedComponent').default;
++  // Mention patch: probe the compiled build this file's bundle resolves
++  // (`module` → lib/module), not `src`: on web a `src` require pulls a second
++  // copy of Reanimated's source tree into the startup chunk.
++  require('react-native-reanimated/lib/module/createAnimatedComponent/AnimatedComponent').default;
+   refreshesAnimatableRef =
+   // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+   typeof AnimatedComponent?.prototype?._refreshComponentRef === 'function';

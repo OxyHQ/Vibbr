@@ -1,0 +1,17 @@
+# Bun workspaces: the `bun` ecosystem regenerates bun.lock with the manifest.
+version: 2
+updates:
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      oxy:
+        patterns:
+          - '@oxy.so/*'
+          - '@vibbr.co/*'
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

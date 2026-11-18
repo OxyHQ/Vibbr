@@ -1,0 +1,42 @@
+**/node_modules
+**/dist
+.expo
+**/.git
+.github
+*.md
+infrastructure/
+package-lock.json
+**/coverage/
+**/*.tsbuildinfo
+**/.claude/
+# Local git worktrees (excluded via .git/info/exclude, so a checkout can hold
+# dozens of full copies of the repo, each with its own local files).
+.worktrees/
+
+# Never send local secrets or platform credentials to a Docker builder. No
+# build step reads an .env file, examples included (the builds are `tsc`), so
+# every variant stays out of image layers and remote build caches.
+**/.env*
+**/.npmrc
+**/.aws/
+**/.ssh/
+**/credentials/
+**/*credentials*.json
+**/*service-account*.json
+**/google-services.json
+**/*.pem
+**/*.key
+**/*.p8
+**/*.p12
+**/*.jks
+**/*.keystore
+
+# Keep only the frontend manifest needed to validate the full workspace
+# lockfile. Bun's official workspace filters exclude its dependency graph.
+packages/frontend/*
+!packages/frontend/package.json
+
+# Retired local packages are not workspaces and must not inflate Docker build
+# contexts when their generated directories are still present locally.
+packages/agora/
+packages/agora-shared/

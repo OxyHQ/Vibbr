@@ -1,0 +1,7 @@
+# What production runs is decided by these files, so the owner reviews every
+# change to them: the workflows (each can build, push or deploy) and the image.
+/.github/CODEOWNERS @NateIsern
+/.github/workflows/ @NateIsern
+Dockerfile* @NateIsern
+.dockerignore @NateIsern
+*.dockerignore @NateIsern

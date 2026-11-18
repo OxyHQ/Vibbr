@@ -1,0 +1,212 @@
+# User mentions
+
+User mentions link text in a post to an Oxy identity.
+
+## Canonical forms
+
+| Stage                  | Form                                                 |
+| ---------------------- | ---------------------------------------------------- |
+| Composer display       | `@handle`                                            |
+| Stored post text       | `[mention:<oxyUserId>]`                              |
+| Stored index/allowlist | `Post.mentions: string[]`                            |
+| Hydrated API text      | `[@<label>](<canonicalHandle>)`                      |
+| Rendered post          | Clickable `<label>` linking to `/@<canonicalHandle>` |
+
+For example, selecting `@alice` can produce:
+
+```json
+{
+  "content": { "text": "Hello [mention:oxy-alice]" },
+  "mentions": ["oxy-alice"]
+}
+```
+
+The placeholder is an internal stable reference. A bare `@alice` typed without
+selecting a result becomes one only when the composer resolves it to exactly one
+account (see below); otherwise it is ordinary text in the composer.
+
+## Composer and picker
+
+`packages/frontend/components/MentionTextInput.tsx` owns the input
+transformation, but not mention state. Its parent passes controlled
+storage-format `value` + `mentions` and receives one atomic
+`onValueChange({ text, mentions })` candidate update. The parent reconciles that
+registry against every author rendition of the same post. This avoids a hidden
+child registry drifting from compose, threads, variants, drafts, or edit mode.
+When the cursor is inside an `@` token without a space or newline, it opens
+`MentionPicker`.
+
+`hooks/useMentionSearchResults.ts` waits 300 ms after at least one query
+character, then searches Oxy profiles with a limit of ten through the composer
+session's search cache (`utils/mentionSearch.ts`, provided by
+`context/MentionSearchContext.tsx`); a query the session already searched is
+answered at once, and one still pending never shows the previous query's
+accounts. `packages/frontend/components/MentionPicker.tsx` is Bloom's
+`SuggestionList` (`kind="mention"`, from `@oxy.so/bloom/chat-composer`): Bloom
+draws the rows, the verified badge, the "Searching…" and "No people found"
+lines and the listbox semantics — there is no app-side list UI. The input owns
+the highlight: on web ↑/↓ move it (wrapping), Enter or Tab takes it and Escape
+closes the list; on native the rows are tapped, because a phone's return key
+cannot be kept from breaking the line. Selecting a valid profile records:
+
+```ts
+{
+  userId: string;
+  username: string;
+  displayName: string;
+}
+```
+
+and replaces the active token with `[mention:<userId>]` in parent state.
+Compose, thread items, and content variants use this component.
+
+A handle typed by hand is treated as picked once it is finished — a space,
+newline or punctuation follows it — when the session's search results name
+exactly one account with that username (case-insensitive). The answer comes
+from the cache the picker filled; only a handle nothing has searched for yet
+costs one request, deduplicated across every input in the session. No exact
+match, or two different accounts with it, leaves the text alone. Only the shared
+scanner's `bareHandle` spans are considered, so a handle inside a URL or an
+email is untouched and a federated `@a@b.tld` is left for the server. On submit,
+`ComposeScreen` resolves any handle still typed (usually the last word) from the
+cache alone, without a request.
+
+Shared helpers
+in `@mention/shared-types/mentions` and
+`packages/frontend/utils/mentions.ts` preserve body order, deduplicate IDs and
+intersect metadata with placeholders that are still present. A placeholder
+typed by hand never authorizes a recipient.
+
+The text and ID array are one invariant:
+
+- Every canonical placeholder must have its ID in `mentions`.
+- `mentions` contains Oxy user IDs, not usernames or display names.
+- Callers send both forms together; the server never infers IDs from arbitrary
+  text.
+- Every create/thread/edit boundary intersects the supplied allowlist with the
+  placeholders in all author variants before persistence and notifications.
+
+The frontend performs the same reconciliation when typing, changing languages,
+saving/restoring a draft, and building a request. Backend reconciliation is the
+final authority, so an old or malicious client cannot notify an ID whose
+placeholder is gone.
+
+Edit mode must not reverse a hydrated Markdown link back into an identity.
+`GET /posts/:id/edit-source` is owner-only and returns the raw author variants,
+the exact ID allowlist, and any canonical Oxy users that resolved for display.
+If Oxy is unavailable, the stable placeholder and ID are preserved with no
+invented handle.
+
+## Persistence and hydration
+
+`Post.content` stores the placeholder text and `Post.mentions` stores the
+identity references used by queries and readers. Readers normalize and
+deduplicate this array. `mentions` is indexed together with `created_at`.
+
+All post DTOs go through `PostHydrationService`. For each post it:
+
+1. Treats the post's normalized `mentions` array as the allowlist.
+2. Resolves only allowlisted IDs that appear in the text, using the shared
+   per-request user cache and bulk Oxy resolution.
+3. Uses `getNormalizedUserHandle`, including `username@domain` for federated
+   users.
+4. Replaces a resolved placeholder with
+   `[@<displayName-or-handle>](<canonicalHandle>)`.
+5. Applies the same resolution to the selected body and every inline language
+   variant.
+
+An undeclared or unresolved placeholder is not linked and is left unchanged
+rather than inventing an identity. Consumers must render hydrated DTOs, not raw
+post rows.
+
+`packages/frontend/components/common/LinkifiedText.tsx` recognizes the hydrated
+form, renders its label with link styling, normalizes the handle, and navigates
+to `/@<handle>`. It does not turn arbitrary plain `@text` into a profile link.
+
+## Notifications
+
+Mention notifications are driven by the persisted `mentions` IDs, not by
+parsing visible text. Published posts run `createMentionNotifications` from the
+post side-effect pipeline; scheduled posts do so when they are published, and
+thread creation applies it per post.
+
+The helper deduplicates recipients and skips self-mentions. `createNotification`
+also prevents duplicate records for the same recipient, actor, type, and
+entity. A successful notification is stored, emitted on the Socket.IO
+`/notifications` namespace to `user:<oxyUserId>`, and offered to push delivery
+on a best-effort basis. The entity type distinguishes a post mention from a
+reply mention.
+
+A private mention (a `direct` post) notifies its recipients instead — one
+`private_mention` each (`createPrivateMentionNotifications`), with no separate
+mention, reply or subscriber notice. Its push copy names only the sender, and
+the Mentions push toggle governs it. See
+[post lifecycle](./post-lifecycle.md#visibility).
+
+In the app, `private_mention` notices sit under the Mentions tab with a lock
+badge, and the notifications header opens `/notifications/private-mentions`,
+the conversations list (`usePrivateMentionConversations`). A direct post shows a
+lock in its identity line and its thread opens with "Only visible to the people
+mentioned". The composer's audience chip (Everyone / Private mention) is offered
+to original posts only; a private mention hides collaborators, lanes,
+publish-as and communities and must mention someone before it is sent. A reply
+in a private conversation is labelled as staying in it; the server narrows it.
+
+## ActivityPub
+
+Inbound and outbound federation preserve the same storage invariant.
+
+For an inbound Note:
+
+1. The ActivityPub `tag` entry with `type: "Mention"` supplies the authoritative
+   actor URI.
+2. Its matching content anchor is identified by `href`, not ambiguous visible
+   text.
+3. Resolved local or remote actors are mapped to canonical Oxy user IDs.
+4. Matching anchors in `content` and `contentMap` become internal placeholders,
+   and the IDs are stored in `Post.mentions`.
+5. Unresolved mention anchors retain their actual HTTP(S) destination as
+   `[@<label>](<sourceUrl>)`; the label includes the visible `@` and is always
+   a qualified handle. Mastodon writes a same-instance mention as the bare
+   `@user`, so a label with no `@domain` takes the host of its destination:
+   `[@@user@instance](https://instance/@user)`. The reader opens an internal resolution route which uses
+   the existing federation resolver to obtain the canonical Oxy identity and
+   redirect to `/@<canonicalHandle>`. This applies to all source profile shapes,
+   including Group actors and opaque actor URLs. If URL discovery returns no
+   identity, an explicit `/@handle` can supply a WebFinger candidate, which must
+   resolve to an Oxy ID before navigation; opaque IDs and visible labels never
+   supply guessed identities. A missing identity or a failed lookup stays inside
+   the app with the normal unavailable/retry state, never an external redirect.
+   Resolution does not alter the stored notification allowlist.
+   Invalid destinations remain ordinary text. These labelled links are atomic
+   scanner entities and never become document previews.
+
+Outbox re-sync repairs existing dead mentions from the source HTML, including
+links whose identities still cannot resolve, and skips bodies already repaired.
+`repairFederatedMentions.ts` is the backfill: it re-fetches every federated post
+whose body still holds a handle with no `@domain` (bare `@user` text, an
+unqualified `[@@user](…)` link, or a raw `https://host/@user` URL) and re-derives
+it with the ingest rules. It supports a bounded repair with `REPAIR_POST_IDS`
+(comma-separated IDs) and `DRY_RUN=true` for reviewing the exact changes first.
+
+Only locally hosted mentioned users receive a Mention notification for an
+inbound federated post, and each recipient's fediverse-sharing consent is
+checked. Remote identities remain in `Post.mentions` for rendering but do not
+have a local Mention notification inbox.
+
+For outbound Notes, the ActivityPub connector batch-resolves the IDs declared
+by `Post.mentions`. A resolved placeholder becomes a safe
+`<a class="u-url mention">` anchor and a machine-readable `Mention` tag. Remote
+mentioned actors are added to addressing and delivery inboxes where available.
+Undeclared or unresolved internal placeholders are removed from federated HTML;
+raw Oxy IDs never go onto the wire.
+
+## Maintainer checklist
+
+- Use `MentionTextInput` rather than implementing another parser.
+- Keep its text and metadata controlled by the post-level composer state.
+- Reconcile against all author variants, not only the currently visible tab.
+- Hydrate through `PostHydrationService`.
+- Use canonical Oxy handles for navigation.
+- Preserve href-based ActivityPub matching and never expose internal
+  placeholders externally.

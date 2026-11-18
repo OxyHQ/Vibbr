@@ -1,0 +1,513 @@
+name: Deploy Mention Backend to AWS
+
+on:
+  # Two triggers, one release per commit. `release-provenance.sh` in the `scope`
+  # job decides which of them owns a given SHA, and the answer is the same from
+  # both sides, so exactly one of them deploys it:
+  #
+  #   * push to main — a commit that came through the merge queue. The queue
+  #     tested this exact SHA in a `merge_group` run of CI and only then
+  #     fast-forwarded main to it, so the release verifies THAT run's
+  #     `CI complete` (by the GitHub API, for this SHA, fail-closed) and starts
+  #     at once instead of waiting ~8-10 minutes for CI on push to re-test the
+  #     same tree. Every other push is skipped here, with a notice.
+  #
+  #   * workflow_run of CI — the path every release used to take, kept as the
+  #     fallback for commits that did NOT come through the queue (an admin
+  #     bypass, a direct push, the window before the queue is switched on). It
+  #     still requires CI on push to have succeeded, exactly as before, and it
+  #     skips any SHA the push path already owns.
+  #
+  # Before the merge-queue ruleset is enabled no commit is ever verified, so
+  # the push trigger skips everything and releases behave exactly as they did.
+  push:
+    branches: [main]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-west-2
+  AWS_ACCOUNT_ID: '237343248947'
+  ECR_REGISTRY: 237343248947.dkr.ecr.us-west-2.amazonaws.com
+  APP: mention
+  CONTAINER_NAME: mention
+  CLUSTER: oxy-cluster
+  # The commit under release: the pushed head on `push`, the tested head on
+  # `workflow_run`. Both are commits on main; require-current-main.sh refuses
+  # either the moment it stops being main's head.
+  DEPLOY_SHA: ${{ github.event_name == 'push' && github.sha || github.event.workflow_run.head_sha }}
+
+jobs:
+  # Decides, before anything is serialised, whether this run releases anything:
+  # which path owns the SHA, whether it is still main's head, and whether it
+  # changed anything this target ships. It sits OUTSIDE the release concurrency
+  # group on purpose — see the deploy job.
+  scope:
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # `actions: read` to look up the SHA's merge_group CI run and its jobs. Job
+    # level, so no other job gains it; this job holds nothing else.
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      deploy: ${{ steps.filter.outputs.deploy }}
+    steps:
+      # Shallow and sparse: one commit, `.github/scripts` only. Every step up
+      # to the scope diff reads nothing else — the provenance answer comes from
+      # the GitHub API and the current-main guard compares SHAs — and every
+      # commit starts this job twice (push and CI's workflow_run), with one of
+      # the two always releasing nothing. A full clone with every tag was ~6s
+      # of the ~8s that no-op spent. The history the scope diff needs is
+      # fetched below, only on the run that is about to use it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          fetch-depth: 1
+          sparse-checkout: .github/scripts
+      - name: Decide which release path owns this commit
+        id: provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: bash .github/scripts/release-provenance.sh
+      # Checked here as well as in the deploy job, and this one is what keeps
+      # the release lane ordered: a run whose SHA main has already left never
+      # reaches the concurrency group, so it cannot displace a newer release
+      # waiting there (GitHub cancels a PENDING run when another queues behind
+      # it). Neutral, not red — the newer head's release carries this commit.
+      - name: Skip a commit main has already moved past
+        id: current
+        if: steps.provenance.outputs.release == 'true'
+        env:
+          STALE_RELEASE: skip
+        run: bash .github/scripts/require-current-main.sh
+      # The scope diff runs from the `deployed/backend` marker to the
+      # candidate, so it needs the marker tags and the history that connects
+      # them to the candidate — what `fetch-depth: 0` + `fetch-tags: true` gave
+      # the checkout before. Same condition as the scope step, so the diff never
+      # runs against a shallow clone; a failed fetch is a red run, never a
+      # narrowed scope.
+      - name: Fetch the history and markers the scope diff needs
+        if: steps.current.outputs.current == 'true'
+        run: git fetch --unshallow --tags --no-recurse-submodules origin
+      - name: Detect backend deployment scope
+        id: filter
+        if: steps.current.outputs.current == 'true'
+        run: bash .github/scripts/deployment-scope.sh backend
+
+  deploy:
+    needs: scope
+    if: needs.scope.outputs.deploy == 'true'
+    # On THIS job, not the workflow, since the workflow gained a second trigger.
+    # Every commit now starts two runs of it (push, then CI's workflow_run ~10
+    # minutes later), and one of the two always releases nothing. A
+    # workflow-level group would queue the no-op beside real releases, and
+    # GitHub cancels a pending run when another queues behind it — so a no-op
+    # for an older commit could silently displace a pending release of a newer
+    # one. Here only a run that `scope` has already judged current and owned
+    # ever enters the lane.
+    concurrency:
+      group: deploy-mention-backend
+      # Serialize production rollouts. Cancelling after `update-service` would leave
+      # an unmonitored deployment running in ECS.
+      cancel-in-progress: false
+    outputs:
+      # 'true' only when the LAST stale-release guard passed, i.e. this job went
+      # on to change production. A job that stopped at a stale guard still
+      # succeeds (neutral), so success alone must not move the marker.
+      released: ${{ steps.current_release.outputs.current }}
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      id-token: write
+      contents: read
+    # Includes image build, migrations, rollout, smoke checks and a full
+    # rollback window if the production smoke check fails.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          fetch-depth: 2
+
+      - name: Verify current main before building
+        id: current_build
+        env:
+          STALE_RELEASE: skip
+        run: bash .github/scripts/require-current-main.sh
+
+      - name: Configure AWS credentials
+        if: steps.current_build.outputs.current == 'true'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
+        with:
+          role-to-assume: arn:aws:iam::237343248947:role/oxy-github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        if: steps.current_build.outputs.current == 'true'
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
+
+      - name: Set up Docker Buildx
+        if: steps.current_build.outputs.current == 'true'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Production builds only what the owner reviewed: the Dockerfile, context,
+      # target and both .dockerignore files must match the ONE pin in
+      # .github/scripts/reviewed-images.json, or nothing is built or pushed.
+      # The build takes its Dockerfile, context and labels from these outputs.
+      # CI runs the same check on every pull request and merge group
+      # (`reviewed-image.py check`, ci.yml job "Build, lint and typecheck").
+      - name: Refuse unreviewed image build inputs
+        if: steps.current_build.outputs.current == 'true'
+        id: reviewed
+        uses: OxyHQ/oxy/.github/actions/reviewed-image@main
+        with:
+          phase: guard
+          recipe: mention
+      - name: Build and push immutable backend image
+        if: steps.current_build.outputs.current == 'true'
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ steps.reviewed.outputs.context }}
+          file: ${{ steps.reviewed.outputs.dockerfile }}
+          platforms: linux/arm64
+          push: true
+          tags: ${{ env.ECR_REGISTRY }}/oxy/${{ env.APP }}:${{ env.DEPLOY_SHA }}
+          cache-from: type=gha,scope=mention-backend
+          cache-to: type=gha,mode=max,scope=mention-backend
+          provenance: true
+          sbom: true
+          labels: |-
+            org.opencontainers.image.revision=${{ env.DEPLOY_SHA }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            io.oxy.source.tree=${{ steps.reviewed.outputs.source_tree }}
+            io.oxy.build-inputs.sha256=${{ steps.reviewed.outputs.build_inputs_sha256 }}
+
+      - name: Audit final backend runtime image
+        if: steps.current_build.outputs.current == 'true'
+        env:
+          IMAGE_URI: ${{ env.ECR_REGISTRY }}/oxy/${{ env.APP }}@${{ steps.build.outputs.digest }}
+          EXPECTED_RUNTIME_ENTRY: packages/backend/dist/server.js
+          EXPECTED_WORKSPACE_PACKAGES: '@mention/backend,@mention/shared-types,@oxy.so/mention-contracts'
+        run: bash .github/scripts/audit-runtime-image.sh
+
+      - name: Verify current main before production changes
+        id: current_changes
+        if: steps.current_build.outputs.current == 'true'
+        env:
+          STALE_RELEASE: skip
+        run: bash .github/scripts/require-current-main.sh
+
+      # Runtime secrets are NOT in GitHub. SSM Parameter Store (/oxy/mention/*
+      # and /oxy/mention-mcp/*, SecureString) is their single source of truth:
+      # the task definition reads them at task start, and nothing in this
+      # workflow writes one. Setting or rotating a value is
+      # `aws ssm put-parameter --overwrite` by its owner (oxy-infra
+      # docs/runbooks/46-app-secrets-in-ssm.md), never a repo secret. Until
+      # 2026-10-10 a step here copied GitHub repo secrets into SSM on every
+      # deploy; that made GitHub the source of truth for production credentials
+      # and is gone. Two values have a second home that a rotation must update
+      # too (docs/AWS_DEPLOYMENT.md, "Runtime secrets"): MENTION_MCP_JWT_SECRET
+      # is read from BOTH /oxy/mention/ and /oxy/mention-mcp/, and
+      # MENTION_SHELL_ACCESS_KEY is also the shell Worker's key, which
+      # deploy-frontends.yml uploads from the GitHub secret of that name.
+
+      - name: Re-verify current main before ECS rollout
+        id: current_release
+        if: steps.current_changes.outputs.current == 'true'
+        env:
+          STALE_RELEASE: skip
+        run: bash .github/scripts/require-current-main.sh
+
+      # Keep the running image and rollback targets under the lifecycle-managed
+      # `deployed-<sha>` tags. Re-tag by digest so ECR refuses the write unless
+      # the manifest still hashes to the image built by this trusted deploy.
+      - name: Tag the released image
+        if: steps.current_release.outputs.current == 'true'
+        run: bash .github/scripts/tag-ecr-image.sh "oxy/$APP" "${{ steps.build.outputs.digest }}" "$DEPLOY_SHA" "deployed-$DEPLOY_SHA"
+
+      - name: Register immutable task definition and deploy
+        if: steps.current_release.outputs.current == 'true'
+        env:
+          IMAGE_URI: ${{ env.ECR_REGISTRY }}/oxy/${{ env.APP }}@${{ steps.build.outputs.digest }}
+          RUN_MIGRATIONS: 'true'
+          # Normally EMPTY, and empty is the safe value: the deploy then refuses
+          # a service scaled to zero, which is what a lost-capacity incident
+          # looks like.
+          #
+          # Set to `mention:<YYYY-MM-DD>` only for a planned window where traffic
+          # is deliberately held at zero — a store migration is the case it was
+          # written for, and the last one is done. Set it in the same step that
+          # scales to 0 and unset it in the step that scales back up, so its
+          # lifetime is the window's.
+          #
+          # It is inert on its own: `deploy-ecs-image.sh` only consults it when
+          # `desiredCount` is already 0, which takes a deliberate scale-down. A
+          # variable left set cannot authorise anything by itself — and the
+          # expiry means a forgotten one disarms itself the day after, rather
+          # than leaving this repo permanently easier to deploy onto nothing.
+          ALLOW_ZERO_DESIRED_COUNT: ${{ vars.ALLOW_ZERO_DESIRED_COUNT }}
+          # The task definition this deploy registers is derived from the LIVE one,
+          # not from Terraform — `terraform-uswest2` is many revisions behind and
+          # its `image` is `:latest`, so applying it would replace the
+          # digest-pinned image this pipeline runs. Anything that must reach
+          # production therefore goes HERE as well as in the Terraform record.
+          #
+          # DATABASE_URL: the backend opens Postgres at boot and refuses to come
+          # up without it, so a missing parameter surfaces as
+          # `ResourceInitializationError: unable to pull secrets` before any task
+          # runs.
+          #
+          # MENTION_SHELL_ACCESS_KEY: the shell Worker serves nothing without it,
+          # so a task that lacks it answers every apex web request with the empty
+          # 502 shell. `config/index.ts` refuses to boot without it in production
+          # rather than start into that state, which means a missing parameter
+          # surfaces as a failed rollout the circuit breaker reverts.
+          #
+          # CROWDSOURCE_WEBHOOK_SECRET: the signing secret CrowdSource issues per
+          # endpoint, and the ONLY secret the moderation integration still has —
+          # Mention holds no CrowdSource credential, it presents its Oxy service
+          # token. Without this the webhook route is not mounted, and the outbox
+          # deliberately holds reports rather than send ones whose decisions
+          # could never be verified on the way back.
+          #
+          # META_GRAPH_ACCESS_TOKEN / META_IG_BUSINESS_ACCOUNT_ID: the Instagram
+          # Graph connector's credentials. They used to be OPTIONAL bindings,
+          # added only when the GitHub-to-SSM sync had written them in the same
+          # run; with that sync gone nothing in a deploy can prove a parameter
+          # exists, so they are fixed like the rest. Both parameters exist and
+          # were already bound on the live revision when this changed
+          # (oxy-mention:505, 2026-10-10). The connector stays inert until
+          # vars.INSTAGRAM_GRAPH_ENABLED is true. A NEW secret follows the same
+          # order: write the parameter first, then name it here.
+          TASK_SECRET_OVERRIDES_JSON: >-
+            {"MENTION_MCP_JWT_SECRET":"arn:aws:ssm:us-west-2:237343248947:parameter/oxy/mention/MENTION_MCP_JWT_SECRET",
+             "DATABASE_URL":"arn:aws:ssm:us-west-2:237343248947:parameter/oxy/mention/DATABASE_URL",
+             "MENTION_SHELL_ACCESS_KEY":"arn:aws:ssm:us-west-2:237343248947:parameter/oxy/mention/MENTION_SHELL_ACCESS_KEY",
+             "CROWDSOURCE_WEBHOOK_SECRET":"arn:aws:ssm:us-west-2:237343248947:parameter/oxy/mention/CROWDSOURCE_WEBHOOK_SECRET",
+             "META_GRAPH_ACCESS_TOKEN":"arn:aws:ssm:us-west-2:237343248947:parameter/oxy/mention/META_GRAPH_ACCESS_TOKEN",
+             "META_IG_BUSINESS_ACCOUNT_ID":"arn:aws:ssm:us-west-2:237343248947:parameter/oxy/mention/META_IG_BUSINESS_ACCOUNT_ID"}
+          # Provider credentials never enter this task, and neither does a
+          # routing input: Mention asks Kaana for the `instant` power level, a
+          # code constant (utils/inference.ts), and Oxy's grant decides the rest.
+          #
+          # WEB_SHELL_ORIGIN is pinned here rather than left to the default in
+          # `config/index.ts`, because this revision is derived from the LIVE task
+          # definition: if that definition already carries the old
+          # `mention-frontend.pages.dev` value as an env var, the code default
+          # never applies and the backend would keep proxying to a Pages project
+          # this migration retires. Naming it makes the deploy authoritative.
+          #
+          # MOVE_APPLICATION_ID is the Oxy application id of Oxy Move, the only
+          # caller the `/imports/v1` ingest admits (docs/import.mdx). It is an
+          # id, not a secret: the gate is the service token Oxy signs for it.
+          # MENTION_OXY_FOREGROUND_CATALOG_BINDING is the Oxy catalogue this backend
+          # approves for the signed-in who-to-follow ranking: Oxy's active `oxy`
+          # registration (id, version, digest). It is pinned HERE because this is
+          # the only place an environment value reaches the running service (the
+          # revision is derived from the live one; Terraform's is never adopted).
+          # A new catalogue version is registered by Oxy's deploy (oxy ADR 0048),
+          # which prints the binding; move it here and redeploy the configuration.
+          # Until then Oxy refuses the tickets: ticket_catalog_no_longer_current.
+          TASK_ENV_OVERRIDES_JSON: >-
+            {"WEB_SHELL_ORIGIN":"https://shell.mention.earth",
+             "MOVE_APPLICATION_ID":"4bac8f1baed68fd02d65d592",
+             "MENTION_OXY_FOREGROUND_CATALOG_BINDING":"{\"registrationId\":\"01a16014-f77e-7013-b414-50deb9b61c60\",\"version\":\"1.1.0\",\"digest\":\"8cb3806c6caaade2f2b7b11d7a057907eb9a0d957f75334b8cb55f5d2c7bb658\"}"}
+          # OPTIONAL environment, merged into the lists above and below by
+          # optional-task-bindings.sh (which states the rules in full). A
+          # variable here comes from the repository variable of the same name.
+          # Set: validated against the backend's config schema and rendered.
+          # Unset: REMOVED from the revision, so the code default applies —
+          # Instagram off, Graph v23.0, backfill 50, federated media deletion
+          # ON. The Instagram connector additionally stays
+          # inert until both credentials are present.
+          OPTIONAL_TASK_ENV: >-
+            INSTAGRAM_GRAPH_ENABLED
+            META_GRAPH_API_VERSION
+            INSTAGRAM_GRAPH_FOLLOW_BACKFILL_LIMIT
+            FEDERATED_MEDIA_DELETE_ENABLED
+            APPLE_TEAM_ID
+            ANDROID_APP_SIGNING_SHA256
+          OPTIONAL_ENV_APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          OPTIONAL_ENV_ANDROID_APP_SIGNING_SHA256: ${{ vars.ANDROID_APP_SIGNING_SHA256 }}
+          OPTIONAL_ENV_INSTAGRAM_GRAPH_ENABLED: ${{ vars.INSTAGRAM_GRAPH_ENABLED }}
+          OPTIONAL_ENV_META_GRAPH_API_VERSION: ${{ vars.META_GRAPH_API_VERSION }}
+          OPTIONAL_ENV_INSTAGRAM_GRAPH_FOLLOW_BACKFILL_LIMIT: ${{ vars.INSTAGRAM_GRAPH_FOLLOW_BACKFILL_LIMIT }}
+          OPTIONAL_ENV_FEDERATED_MEDIA_DELETE_ENABLED: ${{ vars.FEDERATED_MEDIA_DELETE_ENABLED }}
+          # A standing absence assertion: every revision is derived from the
+          # live one, so merely stopping the GitHub-to-SSM sync would otherwise
+          # keep injecting this retired provider credential forever.
+          #
+          # OXY_SERVICE_API_KEY/SECRET: the condition this removal waited for has
+          # been met, and the marker below is what records that rather than
+          # asserting it.
+          #
+          # The first attempt took production down. Mention could attest its task
+          # role and did mint a real service token — but the two mint paths did
+          # not grant the same AUTHORITY: a credential that NAMED a privileged
+          # scope kept it, an attestation never received one. Mention's
+          # credential names three. The pair came off at revision 384 (06:04Z)
+          # and from 06:22Z the federation worker failed every ~6 minutes with
+          # `Missing required scope: federation:write` — 313 of them, plus
+          # `signals:write`, against ZERO in the preceding 36 hours. Revision 389
+          # put the pair back and they stopped.
+          #
+          # oxy#1350 fixed that at the root: a BINDING now names its scopes the
+          # way a credential does, gated by the same staff check and bounded by
+          # the same ceiling (the application's own grants). `oxy-mention-task`
+          # was re-bound with all nine on 2026-09-20 and a token minted BY
+          # ATTESTATION from that role was read back, not assumed:
+          #
+          #   WORKLOAD_OK appName=Mention scopes=["catalogs:write","clarity:index",
+          #   "clarity:search","clarity:sites:manage","federation:write",
+          #   "files:read","files:write","signals:write","user:read"]
+          #
+          # Which is the credential's set exactly. So the pair is now a secret
+          # nothing reads, and this list is the only thing that takes it off a
+          # revision — the render derives from the RUNNING one.
+          #
+          # workload-scopes-bound: 2026-09-20
+          # INTERNAL_METRICS_TOKEN guarded /internal/metrics, which is gone:
+          # metrics are CloudWatch EMF now (utils/metrics.ts), so nothing reads it.
+          TASK_SECRET_REMOVALS: >-
+            ALIA_API_KEY
+            OXY_SERVICE_TOKEN
+            OXY_SERVICE_API_KEY
+            OXY_SERVICE_API_SECRET
+            INTERNAL_METRICS_TOKEN
+          # Variables that now say what the code already decides, and would
+          # otherwise ride every future revision forward: the render derives from
+          # the RUNNING task definition, so deleting a line here removes nothing.
+          #
+          # ATPROTO_ENABLED and FEDERATION_MEDIA_CACHE_WRITE_ENABLED are on by
+          # default; INTERNAL_METRICS_ENABLED is gone entirely (and so is the
+          # endpoint it switched; metrics are CloudWatch EMF now);
+          # OXY_ECOSYSTEM_ACTIVITY_ENABLED is gone too (a deployed process knows
+          # it is deployed); POST_CLASSIFICATION_ENABLED was set to the code's own
+          # default, which is a line that can only ever drift;
+          # MENTION_FRONTEND_ORIGIN was set to the value the schema already
+          # defaults to; and OXY_INFERENCE_ROUTING_PROFILE_ID named Oxy's fixed
+          # `kaana-v1` profile, which kaana.ai cannot serve (text features ask
+          # for the `instant` power level in code).
+          #
+          # A standing list, not a one-off: it is re-applied on every deploy, so a
+          # variable somebody re-adds by hand to the live definition does not
+          # quietly survive.
+          TASK_ENV_REMOVALS: >-
+            ATPROTO_ENABLED
+            FEDERATION_MEDIA_CACHE_WRITE_ENABLED
+            INTERNAL_METRICS_ENABLED
+            OXY_ECOSYSTEM_ACTIVITY_ENABLED
+            POST_CLASSIFICATION_ENABLED
+            MENTION_FRONTEND_ORIGIN
+            OXY_INFERENCE_ROUTING_PROFILE_ID
+            OXY_FILE_REFERENCES_ENABLED
+            OXY_FILE_REFERENCE_RECONCILE_MODE
+          # DELIBERATELY UNSET, and it must stay that way — this is the variable
+          # that used to run `reconcile-engagement-projections.js` after every
+          # rollout. `deploy-ecs-image.sh` still supports it; nothing here needs
+          # it. Reasons, in the order that matters:
+          #
+          # 1. IT NEVER FIT, not even with the table empty — AND THE REASON
+          #    GENERALISES TO EVERY POST-DEPLOY ONE-SHOT. `deploy-ecs-image.sh`
+          #    passes `--task-definition "$new_task_definition"` to `run-task`
+          #    (`:593`), and that revision is registered from the LIVE SERVICE's
+          #    own definition (`:515`, `:577`) with only `image`, `secrets`,
+          #    `environment` and the task size (TASK_CPU/TASK_MEMORY) rewritten.
+          #    The size is the SERVICE's, so the one-shot runs on the
+          #    WEB CONTAINER's sizing — `oxy-mention:211` is 512 CPU / 1024 MiB,
+          #    against 8192 CPU / 61440 MiB for the sizing this sweep was timed
+          #    on. 16x the CPU. The 12-minute measurement extrapolates to roughly
+          #    3 HOURS inside a 20-minute deadline. **Any post-deploy one-shot
+          #    doing heavy work inherits a container sized to serve HTTP
+          #    requests.** Whatever gets coupled here next hits this too, and it
+          #    is invisible from the workflow — the sizing is never named in this
+          #    file.
+          # 2. A FAILING ONE-SHOT ROLLS THE SERVICE BACK (`:689`). On 2026-08-05
+          #    a healthy release that had already reached steady state and passed
+          #    its smoke checks was reverted because this sweep did not finish
+          #    inside MAX_WAIT_SECS. Release health and maintenance work are
+          #    different questions, and only one of them may cancel a deploy.
+          # 3. IT IS NOT INCREMENTAL, so the cost is paid in full every time.
+          #    Measured against a 624,116-post copy of production's shape: a
+          #    second run over already-converged data still processed 300,000
+          #    posts in 210s, deleting and reinserting 300,000 rows to produce a
+          #    byte-identical result. Converging beforehand shortens it by
+          #    nothing — which is also why converging out of band did not rescue
+          #    the deploy that this removal follows.
+          # 4. THE COST GROWS WITH THE TABLE, so no timeout survives. Work is
+          #    O(distinct reply parents), which grows with content — production
+          #    was at 156,945 of them, reconciled twice per run. Raising
+          #    MAX_WAIT_SECS would not have bought months even before (1); with
+          #    it, there was never a value that worked.
+          # 5. IT IS A MIGRATION-WINDOW CLOSER, not a release step — its own
+          #    docblock says so. It repairs what the writers that predate the
+          #    Postgres cutover left wrong: a fixed, historical set. Today's
+          #    writers maintain both projections transactionally
+          #    (`PostEngagementCommandService`, `recordRecentReplierForPost`) and
+          #    the backfill loads both, so on an ordinary deploy it recomputes
+          #    correct values into themselves.
+          #
+          # It now runs BY HAND when there is a reason to — after a restore, or
+          # after any window where those writers were not the only ones writing.
+          # `packages/backend/scripts/reconcile-engagement-projections.ts` holds
+          # the command and how to launch it.
+          POST_DEPLOY_SMOKE_SCRIPT: .github/scripts/smoke-mention.sh
+          # The serving task's size, re-asserted on every revision (the render
+          # otherwise copies it from the RUNNING one). On the shared EC2
+          # capacity since 2026-10-21 these are the container's CPU SHARE (a
+          # floor under contention; it bursts into the whole instance, so the
+          # sitemap build that pinned 1 vCPU on Fargate gets more, not less)
+          # and its HARD memory limit: 6144, 3x the Fargate 2048 that the task
+          # reached 1,952 MB of. Placement reserves the memoryReservation
+          # (2048), not this. Every one-shot this deploy launches inherits it.
+          TASK_CPU: '512'
+          TASK_MEMORY: '6144'
+        # The existing target group remains on `/`, which server.ts now serves
+        # as the same readiness gate as `/health/ready`. ELB mutations belong
+        # in oxy-infra because the deploy role intentionally lacks ELB access.
+        run: |
+          set -euo pipefail
+          bindings="$(bash .github/scripts/optional-task-bindings.sh)"
+          TASK_SECRET_OVERRIDES_JSON="$(jq -c '.secrets' <<<"$bindings")"
+          TASK_ENV_OVERRIDES_JSON="$(jq -c '.environment' <<<"$bindings")"
+          TASK_ENV_REMOVALS="$(jq -r '.environmentRemovals | join(" ")' <<<"$bindings")"
+          export TASK_SECRET_OVERRIDES_JSON TASK_ENV_OVERRIDES_JSON TASK_ENV_REMOVALS
+          bash .github/scripts/deploy-ecs-image.sh
+
+  record-deployment:
+    # Runs only after a green production rollout, so a failed or rolled back
+    # release stays inside the next candidate's scope diff — and only when that
+    # rollout actually happened. A deploy job that met a stale guard ends green
+    # having changed nothing; moving the marker to its SHA would drop every
+    # change between production and that SHA out of the next scope diff.
+    needs: deploy
+    if: needs.deploy.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The only job in this workflow that may move the marker; the deploy job
+    # keeps a read-only token and no AWS job may hold one.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          fetch-depth: 1
+
+      - name: Record the deployed backend revision
+        run: bash .github/scripts/record-deployment.sh backend

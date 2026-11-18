@@ -1,0 +1,99 @@
+#!/usr/bin/env bun
+
+import { access, readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+
+const outputDirectory = resolve(process.argv[2] || 'packages/frontend/dist');
+const failures = [];
+
+async function exists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const indexPath = resolve(outputDirectory, 'index.html');
+if (!(await exists(indexPath))) {
+  failures.push('index.html is missing');
+}
+
+const headersPath = resolve(outputDirectory, '_headers');
+if (!(await exists(headersPath))) {
+  failures.push('_headers is missing');
+} else {
+  const headers = await readFile(headersPath, 'utf8');
+  // The two paths Expo writes content-hashed output to: JS chunks under
+  // /_expo/static, and everything imported as an asset — Bloom's `.woff2` web
+  // fonts among them — under /assets. `/fonts/*` used to be here because the
+  // app served the fonts from `public/fonts/` with hand-copied hashes; Bloom
+  // emits them itself now, so that directory no longer exists.
+  for (const route of ['/_expo/static/*', '/assets/*']) {
+    const escapedRoute = route.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const immutableRule = new RegExp(
+      `^${escapedRoute}\\s*\\n(?:[ \\t]+[^\\n]*\\n)*?[ \\t]+Cache-Control:\\s*public,\\s*max-age=31536000,\\s*immutable\\s*$`,
+      'im',
+    );
+    if (!immutableRule.test(headers)) {
+      failures.push(`_headers has no one-year immutable cache rule for ${route}`);
+    }
+  }
+}
+
+if (await exists(resolve(outputDirectory, '_routes.json'))) {
+  failures.push(
+    '_routes.json must not be published; it is a Cloudflare Pages Advanced Mode ' +
+      "file, and the shell Worker's routing is declared in packages/frontend/wrangler.toml",
+  );
+}
+
+// SPA fallback has TWO providers because this build is deployed twice: the shell
+// Worker gets it from `not_found_handling` in `wrangler.toml`, and the Cloudflare
+// Pages preview the release gate browses gets it from `_redirects` and NOTHING
+// else. After the Pages browser gate, deploy-frontends.yml removes this one
+// control file from the ephemeral output before Worker promotion: Workers
+// already provide the fallback via `not_found_handling`, and current Wrangler
+// rejects the Pages rewrite because it conflicts with canonical HTML handling.
+if (!(await exists(resolve(outputDirectory, '_redirects')))) {
+  failures.push(
+    '_redirects is missing; the Cloudflare Pages preview the release gate runs ' +
+      'against has no other source of SPA fallback',
+  );
+}
+
+// The first-paint font preload is written by `packages/frontend/scripts/
+// web-font-preload.mjs` after `expo export`. Checked here as well, with that
+// script's own logic, because an export built without the post-step still
+// boots fine: the font simply starts ~2.7 s late again and nothing else fails.
+// The check also proves the href is the exact URL the startup JavaScript uses
+// and names a file in this export, so the preload cannot double-download.
+if (await exists(indexPath)) {
+  const { checkFontPreloads } = await import(
+    '../../packages/frontend/scripts/web-font-preload.mjs'
+  );
+  failures.push(...(await checkFontPreloads(outputDirectory)));
+}
+
+// The route layout preloads are written by `packages/frontend/scripts/
+// web-layout-preload.mjs` after `expo export`, and checked here for the same
+// reason: an export without them boots fine, its layouts just go back to
+// waiting for the whole common chunk. The check also proves the layouts every URL
+// loads are preloaded (and no others) and each href is a chunk in this export.
+if (await exists(indexPath)) {
+  const { checkLayoutPreloads } = await import(
+    '../../packages/frontend/scripts/web-layout-preload.mjs'
+  );
+  failures.push(...(await checkLayoutPreloads(outputDirectory)));
+}
+
+if (failures.length > 0) {
+  console.error(`Frontend static output validation failed for ${outputDirectory}:\n`);
+  for (const failure of failures) console.error(`- ${failure}`);
+  process.exit(1);
+}
+
+console.log(
+  `Frontend static output contains immutable asset headers and no Worker routes: ${outputDirectory}`,
+);

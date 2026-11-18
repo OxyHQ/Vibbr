@@ -1,0 +1,32 @@
+##
+## The local PostgreSQL a developer runs beside the backend.
+##
+##   docker compose -f docker-compose.postgres.yml up -d postgres
+##   docker compose -f docker-compose.postgres.yml down -v   # wipe (data is disposable)
+##
+## Then in packages/backend/.env:
+##   DATABASE_URL=postgres://vibbr:vibbr@127.0.0.1:5434/vibbr_dev
+## and for the tests:
+##   TEST_DATABASE_URL=postgres://vibbr:vibbr@127.0.0.1:5434/postgres
+##
+## Plain Postgres 17 (what RDS runs): the schema needs no extension.
+##
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: vibbr
+      POSTGRES_PASSWORD: vibbr
+      POSTGRES_DB: vibbr_dev
+    ports:
+      - '5434:5432'
+    volumes:
+      - vibbr-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U vibbr -d vibbr_dev']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  vibbr-pg:

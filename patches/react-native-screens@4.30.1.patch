@@ -1,0 +1,293 @@
+diff --git a/android/build.gradle b/android/build.gradle
+index fb16bb0c96dd92df1c3701c24276d79049ad2916..cb50344157676a56f64c35775ad073f7c87f9c1f 100644
+--- a/android/build.gradle
++++ b/android/build.gradle
+@@ -126,6 +126,18 @@ file("$reactNativeRootDir/ReactAndroid/gradle.properties").withInputStream { rea
+ def REACT_NATIVE_VERSION = reactProperties.getProperty("VERSION_NAME")
+ def REACT_NATIVE_MINOR_VERSION = REACT_NATIVE_VERSION.startsWith("0.0.0-") ? 1000 : REACT_NATIVE_VERSION.split("\\.")[1].toInteger()
+ 
++// Public build capability: consumers may validate support without relying on
++// autolink project names. The enabled value shares the source-selection flag.
++def nativeBackOwnershipEnabled = providers.gradleProperty('rnscreens.nativeBackOwnershipEnabled').orNull == 'true'
++extensions.extraProperties.set('rnscreens.nativeBackOwnership', [apiVersion: 1, enabled: nativeBackOwnershipEnabled].asImmutable())
++
++def excludedBackAdapter = nativeBackOwnershipEnabled ? '**/JavaScriptBackInterceptorDefault.kt' : '**/JavaScriptBackInterceptorNative.kt'
++// AGP's built-in Kotlin aggregates source roots independently of the Android
++// SourceDirectorySet filters. Filter the actual Kotlin compiler inputs as well.
++tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
++    exclude(excludedBackAdapter)
++}
++
+ android {
+     compileSdkVersion safeExtGet('compileSdkVersion', rnsDefaultCompileSdkVersion)
+     namespace "com.swmansion.rnscreens"
+@@ -190,6 +202,10 @@ android {
+         ]
+     }
+     sourceSets.main {
++        // Keep adapters in an existing directory: Bun 1.4's patch installer creates new
++        // nested source directories without search permission. Exactly one source is compiled.
++        java.exclude(excludedBackAdapter)
++        kotlin.exclude(excludedBackAdapter)
+         ext.androidResDir = "src/main/res"
+         kotlin {
+             srcDirs += [
+diff --git a/android/src/main/java/com/swmansion/rnscreens/gamma/stack/host/FragmentOperation.kt b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/host/FragmentOperation.kt
+index 818469b43c2348f3f18df71e77102eafb0124faf..ef6197f6cd5af8b8ff60edebc913812a795567ce 100644
+--- a/android/src/main/java/com/swmansion/rnscreens/gamma/stack/host/FragmentOperation.kt
++++ b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/host/FragmentOperation.kt
+@@ -14,6 +14,7 @@ internal class AddAndSetAsPrimaryOp(
+     val fragment: StackScreenFragment,
+     val containerViewId: Int,
+     val addToBackStack: Boolean,
++    val coveredFragment: StackScreenFragment?,
+     val allowStateLoss: Boolean = true,
+ ) : FragmentOperation() {
+     override fun execute(
+diff --git a/android/src/main/java/com/swmansion/rnscreens/gamma/stack/host/FragmentOperationExecutor.kt b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/host/FragmentOperationExecutor.kt
+index 929c41ed8b97b98c0bd95004b12572ed99f54bb4..809425cc5681c1e4e0323d1f5d9648ee5756485c 100644
+--- a/android/src/main/java/com/swmansion/rnscreens/gamma/stack/host/FragmentOperationExecutor.kt
++++ b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/host/FragmentOperationExecutor.kt
+@@ -26,6 +26,7 @@ internal class FragmentOperationExecutor {
+                 tx.addToBackStack(op.fragment.stackScreen.screenKey)
+             }
+             tx.add(op.containerViewId, op.fragment)
++            op.coveredFragment?.let { tx.detach(it) }
+             tx.setPrimaryNavigationFragment(op.fragment)
+             commitTransaction(tx, op.allowStateLoss)
+         }
+diff --git a/android/src/main/java/com/swmansion/rnscreens/gamma/stack/host/StackContainer.kt b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/host/StackContainer.kt
+index 483ce36125459be81eaa536b153bd2a5803db5af..6fd34bbd0474909c381507a7fedbd81f17e51821 100644
+--- a/android/src/main/java/com/swmansion/rnscreens/gamma/stack/host/StackContainer.kt
++++ b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/host/StackContainer.kt
+@@ -152,15 +152,23 @@ internal class StackContainer(
+                     "[RNScreens] Unable to find a fragment to pop"
+                 }
+ 
+-            check(stackModel.size > 1) {
+-                "[RNScreens] Attempt to pop last screen from the stack"
++            check(stackModel.last() === fragment) {
++                "[RNScreens] Attempt to pop non-top screen"
+             }
+ 
+-            fragmentOps.add(PopBackStackOp(fragment))
+-
+-            check(stackModel.removeAt(stackModel.lastIndex) === fragment) {
+-                "[RNScreens] Attempt to pop non-top screen"
++            if (stackModel.size == 1) {
++                check(pendingPushOperations.isNotEmpty()) {
++                    "[RNScreens] Attempt to pop last screen from the stack"
++                }
++                // The root was never added to FragmentManager's back stack. A replacement
++                // must remove it directly; the pending push installs a new root without a
++                // back stack record, so Back cannot reveal the replaced screen.
++                fragmentOps.add(RemoveOp(fragment))
++            } else {
++                fragmentOps.add(PopBackStackOp(fragment))
+             }
++
++            stackModel.removeAt(stackModel.lastIndex)
+         }
+ 
+         pendingPushOperations.forEach { operation ->
+@@ -171,6 +179,7 @@ internal class StackContainer(
+                     newFragment,
+                     containerViewId = this.id,
+                     addToBackStack = stackModel.isNotEmpty(),
++                    coveredFragment = stackModel.lastOrNull(),
+                 ),
+             )
+             stackModel.add(newFragment)
+@@ -210,16 +219,15 @@ internal class StackContainer(
+         }
+ 
+     private fun updateTopFragment() {
+-        // We try to handle situation where other fragments might be present.
+-        val fragmentManager = requireFragmentManager()
+-        val fragments = fragmentManager.fragments.filterIsInstance<StackScreenFragment>()
+-        check(fragments.isNotEmpty()) { "[RNScreens] Empty fragment manager while attempting to update top fragment" }
+-        fragments.forEach { it.onResignTopFragment() }
+-        fragments.last().onBecomeTopFragment()
++        // Covered fragments are detached, so FragmentManager's added list holds only the top
++        // fragment - the model is the only place all of them can be resigned from.
++        check(stackModel.isNotEmpty()) { "[RNScreens] Empty stack model while attempting to update top fragment" }
++        stackModel.forEach { it.onResignTopFragment() }
++        stackModel.last().onBecomeTopFragment()
+ 
+         // This assumes that the updateTopFragment is called already after primary nav frag. is updated.
+         // If this needs to be changed in the future, just remove this assertion.
+-        check(fragmentManager.primaryNavigationFragment === fragments.last()) {
++        check(requireFragmentManager().primaryNavigationFragment === stackModel.last()) {
+             "[RNScreens] Top fragment different from primary navigation fragment"
+         }
+     }
+diff --git a/android/src/main/java/com/swmansion/rnscreens/gamma/stack/host/StackHost.kt b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/host/StackHost.kt
+index 452a244169c763b51a98fae94fe291f92e2b3d79..e67970a523de1499e043ffd539c53916bedaf934 100644
+--- a/android/src/main/java/com/swmansion/rnscreens/gamma/stack/host/StackHost.kt
++++ b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/host/StackHost.kt
+@@ -109,7 +109,11 @@ class StackHost(
+         r: Int,
+         b: Int,
+     ) {
+-        container.layout(l, t, r, b)
++        // `l, t, r, b` are this host's bounds in its PARENT; a child is laid out
++        // in the host's own coordinate space. Passing them through offset the
++        // container by the host's position a second time whenever the host does
++        // not sit at its parent's origin.
++        container.layout(0, 0, r - l, b - t)
+     }
+ 
+     // ReactViewGroup overrides requestLayout to a no-op therefore the request might not be
+@@ -145,7 +149,7 @@ class StackHost(
+                 MeasureSpec.makeMeasureSpec(measuredHeight, MeasureSpec.EXACTLY),
+             )
+         }
+-        container.layout(left, top, right, bottom)
++        container.layout(0, 0, width, height)
+     }
+ 
+     override fun didMountItems(uiManager: UIManager) {
+diff --git a/android/src/main/java/com/swmansion/rnscreens/gamma/stack/screen/BackPressInterceptor.kt b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/screen/BackPressInterceptor.kt
+new file mode 100644
+index 0000000000000000000000000000000000000000..41afa2560d99a2ce0e7c5add5f939cb270e9ec1b
+--- /dev/null
++++ b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/screen/BackPressInterceptor.kt
+@@ -0,0 +1,12 @@
++package com.swmansion.rnscreens.gamma.stack.screen
++
++/** Optional host-owned Back interception, independent of any application runtime. */
++internal interface BackPressInterceptor {
++    val isEnabled: Boolean
++
++    fun dispatch()
++
++    fun addListener(listener: Runnable)
++
++    fun removeListener(listener: Runnable)
++}
+diff --git a/android/src/main/java/com/swmansion/rnscreens/gamma/stack/screen/JavaScriptBackInterceptorDefault.kt b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/screen/JavaScriptBackInterceptorDefault.kt
+new file mode 100644
+index 0000000000000000000000000000000000000000..e9efacb2d09b55781896b5c9c2bf5e0a02f858d0
+--- /dev/null
++++ b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/screen/JavaScriptBackInterceptorDefault.kt
+@@ -0,0 +1,5 @@
++package com.swmansion.rnscreens.gamma.stack.screen
++
++import android.app.Activity
++
++internal fun createJavaScriptBackInterceptor(activity: Activity): BackPressInterceptor? = null
+diff --git a/android/src/main/java/com/swmansion/rnscreens/gamma/stack/screen/JavaScriptBackInterceptorNative.kt b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/screen/JavaScriptBackInterceptorNative.kt
+new file mode 100644
+index 0000000000000000000000000000000000000000..ea5d6dec2550eb8d52775fbbcf0682c5928f2b37
+--- /dev/null
++++ b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/screen/JavaScriptBackInterceptorNative.kt
+@@ -0,0 +1,25 @@
++package com.swmansion.rnscreens.gamma.stack.screen
++
++import com.facebook.react.ReactActivity
++import android.app.Activity
++
++internal fun createJavaScriptBackInterceptor(owner: Activity): BackPressInterceptor? {
++    val activity = owner as? ReactActivity ?: return null
++    val coordinator = activity.backNavigationCoordinator
++    return object : BackPressInterceptor {
++        override val isEnabled: Boolean
++            get() = coordinator.isNativeNavigationEnabled && coordinator.isJavaScriptEnabled
++
++        override fun dispatch() {
++            activity.onBackPressed()
++        }
++
++        override fun addListener(listener: Runnable) {
++            coordinator.addListener(listener)
++        }
++
++        override fun removeListener(listener: Runnable) {
++            coordinator.removeListener(listener)
++        }
++    }
++}
+diff --git a/android/src/main/java/com/swmansion/rnscreens/gamma/stack/screen/PreventNativeDismissCallback.kt b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/screen/PreventNativeDismissCallback.kt
+index 12b506031ad4274800d731665831ec0cfb464f62..6f1b57c63ccecc9d891ff68f6848ba3da753dd18 100644
+--- a/android/src/main/java/com/swmansion/rnscreens/gamma/stack/screen/PreventNativeDismissCallback.kt
++++ b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/screen/PreventNativeDismissCallback.kt
+@@ -1,18 +1,22 @@
+ package com.swmansion.rnscreens.gamma.stack.screen
+ 
+-import android.util.Log
+ import androidx.activity.OnBackPressedCallback
+ import androidx.lifecycle.Lifecycle
+ import androidx.lifecycle.LifecycleEventObserver
+ import androidx.lifecycle.LifecycleOwner
++import android.util.Log
+ 
+ internal class PreventNativeDismissCallback(
+     lifecycleOwner: LifecycleOwner,
+     private val screen: StackScreen,
+     canBeEnabled: Boolean,
++    private val interceptor: BackPressInterceptor? = null,
+ ) : OnBackPressedCallback(false),
+     LifecycleEventObserver,
+     PreventNativeDismissChangeObserver {
++    private var started = false
++    private val interceptionChanged = Runnable { determineEnabledStatus() }
++
+     /**
+      * A kill-switch whether this callback can even be enabled or not. If set to false,
+      * no matter other conditions this callback won't be enabled.
+@@ -24,13 +28,17 @@ internal class PreventNativeDismissCallback(
+         }
+ 
+     private val shouldBeEnabled
+-        get() = canBeEnabled && screen.isPreventNativeDismissEnabled
++        get() = started && canBeEnabled && (screen.isPreventNativeDismissEnabled || interceptor?.isEnabled == true)
+ 
+     init {
+         lifecycleOwner.lifecycle.addObserver(this)
+     }
+ 
+     override fun handleOnBackPressed() {
++        if (interceptor?.isEnabled == true) {
++            interceptor.dispatch()
++            return
++        }
+         Log.i("RNScreens", "PreventNativeDismissCallback called for screen ${screen.screenKey}")
+         screen.onNativeDismissPrevented()
+     }
+@@ -42,19 +50,23 @@ internal class PreventNativeDismissCallback(
+         when (event) {
+             Lifecycle.Event.ON_CREATE -> {
+                 screen.preventNativeDismissChangeObserver = this
++                interceptor?.addListener(interceptionChanged)
+             }
+ 
+             Lifecycle.Event.ON_START -> {
++                started = true
+                 determineEnabledStatus()
+             }
+ 
+             Lifecycle.Event.ON_STOP -> {
++                started = false
+                 this.isEnabled = false
+             }
+ 
+             Lifecycle.Event.ON_DESTROY -> {
+                 source.lifecycle.removeObserver(this)
+                 screen.preventNativeDismissChangeObserver = null
++                interceptor?.removeListener(interceptionChanged)
+             }
+ 
+             else -> {
+diff --git a/android/src/main/java/com/swmansion/rnscreens/gamma/stack/screen/StackScreenFragment.kt b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/screen/StackScreenFragment.kt
+index 35e56db5eb2b2b842b201212b84c87b44f007e6a..eb91718cbd86e580e83a77d5334f2efb0cdd7418 100644
+--- a/android/src/main/java/com/swmansion/rnscreens/gamma/stack/screen/StackScreenFragment.kt
++++ b/android/src/main/java/com/swmansion/rnscreens/gamma/stack/screen/StackScreenFragment.kt
+@@ -99,7 +99,7 @@ internal class StackScreenFragment(
+ 
+     private fun setupPreventNativeDismissCallback() {
+         preventNativeDismissBackPressedCallback =
+-            PreventNativeDismissCallback(this, stackScreen, canBeEnabled = false)
++            PreventNativeDismissCallback(this, stackScreen, canBeEnabled = false, interceptor = createJavaScriptBackInterceptor(requireActivity()))
+         requireActivity().onBackPressedDispatcher.addCallback(
+             requireNativeDismissBackPressedCallback,
+         )

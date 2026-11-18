@@ -1,0 +1,338 @@
+---
+title: Architecture
+description: Runtime boundaries, data ownership, lifecycle, and deployment topology.
+order: 1
+---
+
+# Architecture
+
+Mention is a Bun monorepo whose runtime boundaries match its four workspaces.
+Shared contracts can change atomically, but each runtime has a separate entry
+point and production artifact.
+
+## Workspace boundaries
+
+```text
+packages/shared-types ───────────────┐
+        │                            │
+        ├──> packages/backend <──────┼── packages/mcp
+        │           │                │
+        └──> packages/frontend ──────┘
+```
+
+| Workspace | Boundary |
+| --- | --- |
+| `frontend` | Presentation, navigation, viewer-scoped cache, local persistence |
+| `backend` | Domain commands and queries, HTTP, sockets, workers, integrations |
+| `shared-types` | Portable contracts; no runtime application state |
+| `mcp` | MCP protocol, OAuth resource validation, sessions, and backend calls |
+
+`bun run build` builds shared types before the backend and MCP. The web export
+is separate because it produces a static Expo artifact.
+
+## Frontend
+
+The Expo 57 app targets native and web from Expo Router routes. TanStack Query
+owns remote server state, while Zustand stores local UI state. Viewer-private
+query keys include the viewer identity; account transitions cancel in-flight
+work, remove the previous private cache, clear persisted identity state, and
+disconnect the previous socket.
+
+Long feeds use virtualized lists and bounded pagination. Native and web database
+implementations are split so the browser does not import the native SQLite
+runtime. Audio, video, composition-heavy code, and non-initial routes are
+loaded at their feature boundary rather than the root provider.
+
+The web build emits browser telemetry through `/telemetry/web`. The payload is
+bounded and contains normalized routes, Core Web Vitals, navigation events, and
+runtime/load failures.
+
+## Backend composition
+
+The backend is assembled from explicit runtime services rather than importing
+state from the server entry point:
+
+```text
+configuration
+    │
+    ├──> PostgreSQL pool and schema state
+    ├──> Redis state, cache, queues, locks, and pub/sub
+    ├──> Express application and route dependencies
+    ├──> Socket.IO and distributed presence
+    └──> schedulers, workers, and connectors
+```
+
+Configuration is parsed with Zod during startup. Feature-specific variables
+become required only when that feature is enabled. Request handling uses one
+central PostgreSQL pool; handlers do not open a connection per request.
+
+### AI boundaries
+
+Mention has two different AI paths, and neither owns a provider adapter or
+provider key. Chat, memory, tools and agent behavior go to Alia, which invokes
+inference as `Mention -> Alia -> Kaana`. Bounded point features (translation,
+summaries, topics, post classification and the Jev shadow lane) call
+`https://kaana.ai/v1` through `@kaana.ai/sdk` as `Mention -> Kaana`, with Oxy
+authorizing and settling each request behind Kaana (Kaana ADR 0002).
+
+The one client lives in `packages/backend/src/utils/kaana.ts`. Its
+credential is Mention's Oxy service token for the `kaana.ai` audience
+(`serviceTokenFor('kaana.ai')`), minted from the ECS task role. Text features
+ask for the `instant` power level, a code constant: Kaana picks the model of
+that class and Oxy's grant applies Mention's policy and economics. Mention never
+names a provider, deployment or Oxy routing profile, never writes the
+`kaana.ai` origin itself (the SDK owns it), and never calls Kaana's
+`/internal/` surface. `scripts/validate-inference-boundary.mjs` enforces this.
+Upstream provider credentials live only as KMS ciphertext in Kaana's
+PostgreSQL store; Mention's Oxy service credential is an application identity,
+not a provider key.
+
+This is the source contract, not proof that production inference runs on it.
+A live cutover additionally requires a real request that completes with the
+expected Oxy attribution and Kaana usage record.
+
+Public and authenticated routers are separate. Authentication accepts an Oxy
+access token or an eligible MCP JWT. Public reads may use optional identity for
+viewer state, while mutations enforce identity.
+
+`PostHydrationService` is the only authority for post response DTOs. It performs
+bulk user resolution, bounded fallback work, and viewer-aware hydration without
+letting controllers build competing post shapes. Concurrent identity misses share
+in-flight work per public user ID, including partially overlapping feed pages.
+New misses still resolve in bulk; each caller receives only its requested IDs.
+Flights are released on settlement, so degraded identities can be retried and
+this mechanism never becomes a second persistent cache.
+
+### Commerce boundary (Mercaria)
+
+Commerce belongs to Mercaria, and Mention reaches it only as
+`Mention -> @mercaria.co/sdk -> Mercaria` (#951, Mercaria#1017).
+
+| Owned by the SDK | Owned by Mention |
+| --- | --- |
+| Hosts, `/public/v1` routes, wire envelope, response parsing | Which account or post points at which ref |
+| `MercariaProduct`/`MercariaStore`/`MercariaCollection` and every ref type | Rendering, ordering and failure policy for a hydrated card |
+| Typed errors (not found, gone, retryable) and canonical links | Configuration: `MERCARIA_API_URL`, `MERCARIA_WEB_URL`, timeout |
+
+`services/commerce/mercariaClient.ts` holds the one lazily created client:
+public catalog reads through the published SDK workload factory (no viewer token), a 5s timeout, and unset origins meaning the SDK's own.
+`services/commerce/mercariaHydration.ts` turns persisted refs, read as unknown
+data, into one state each and never throws:
+
+| State | Meaning |
+| --- | --- |
+| `available` | Current Mercaria truth, with the SDK's canonical `url` |
+| `gone` | Mercaria says it existed and is no longer public |
+| `not_found` | Mercaria says it never existed (a proxy's bare 404 is not this) |
+| `unavailable` | Any other failure, carrying the SDK's `retryable` verdict |
+| `invalid` | The stored value is not a ref of the expected kind; nothing is sent |
+
+Unavailable cards retain their reference and show an unavailable state; they never retain an old price. Account storefront links are rechecked against the SDK’s current store owner on every read. Linking requires live authority to act as the target account.
+
+**Freshness.** Persist refs only — never a title, price or availability.
+Backend hydration caches nothing. The frontend shares a visible-card cache keyed
+by `formatMercariaRef`: repeated cards share one lookup, adjacent visible refs
+are batched in groups of 24, and batches execute sequentially. Backend SDK reads
+within a batch have bounded concurrency. Cached facts expire after 30 seconds;
+price and the outgoing action disappear before a refresh starts and remain
+absent on an outage. The last reader leaving releases its facts. Catalog facts
+are never written into the persistent feed cache. Money formatting belongs to
+the published SDK, including non-ISO currencies such as FAIR. **Distribution.** Hydration is presentation: no ranking,
+feed, search or trending code may read it, so an attached product reaches
+exactly the audience the same post reaches without it.
+
+`bun run validate:commerce-boundary` (part of `check:workspace`) fails on a
+Mercaria host or `/public/v1` path anywhere in production source outside the
+client module. `mercariaHydration.test.ts` is the consumer-conformance suite
+Mercaria#1017 requires: it drives the real SDK against Mercaria's wire envelope
+with the platform `fetch` as the only double.
+
+### Storefronts, publishing and anonymous interaction totals
+
+Settings can connect a Mercaria store to the personal or operated account that
+owns it. Every connection mutation rechecks live Oxy account authority and
+Mercaria ownership; every read rechecks current ownership. Blocked readers and
+private-profile restrictions apply before catalog reads. A transfer or provider
+failure cannot leave an indefinitely valid store link. The Shop tab appears only
+for an available connection and lists paginated products and collections.
+
+Mercaria owns the seller's ordered featured selection: up to six published manual
+collections, managed in its dashboard. Mention reads `stores.featuredCollections`
+and `collections.products` through the SDK; it never chooses a collection
+implicitly or copies a local featured catalog. Each shelf requests six products per page, with independent cursor
+pagination and visible-screen 30-second refresh. Search, stock and ordering
+controls precede curation; active filters show the canonical product results and
+unmount shelf observers, restoring their cached pages when filters are cleared. Product reads recheck current
+selection, store ownership and account readability. A withdrawn shelf or failed
+refresh stops presenting its old products. Query identities include the viewer,
+account, store and collection; changing ownership cannot reuse an outgoing
+snapshot. Shelf observers feed the same virtualized grid as the normal catalog,
+with mounted-card hydration still bounded to 24 refs per batch.
+
+The composer accepts up to four canonical product/collection refs across normal
+posts, thread items, edits and local drafts. Batch writes validate every entry
+before writing anything. Post hydration carries refs only; catalog calls never
+enter feed hydration or ranking. ActivityPub presentation appends canonical links
+without changing the signed author's source text or translations.
+
+Commerce analytics count opens of a post detail/shop and explicit outgoing
+handoffs. They do not count every feed-card render and do not record viewer,
+session, IP, order or buyer identifiers. Daily counters are atomic. Only the
+current account operator can read fixed 30-day totals, suppressed below ten opens.
+The threshold counts interactions, not distinct people. These are not conversion
+or sales metrics: the published provider contract does not supply attribution.
+Post deletion, account erasure, channel deletion and disconnect cascade the
+corresponding counters. Metrics never influence distribution.
+
+## Feed engine
+
+The MTN feed engine is under `packages/backend/src/mtn/feed`. A validated
+descriptor selects a registered source and preset. The engine then applies
+viewer context, filters, ranking signals, pagination, and hydration.
+
+Supported descriptor families include:
+
+- `following`, `for_you`, `explore`, `videos`, `media`, `saved`, and `trending`
+- `mutuals`, `friends_popular`, and `friends_of_friends`
+- `author|<oxyUserId>|<tab>`
+- `hashtag|...`, `topic|...`, `list|...`, `custom|...`, and `feedgen|...`
+
+The request-scoped viewer context resolves graph membership, language settings,
+blocks, restrictions, and Mention mutes once. Excluded authors are removed
+before pagination. Chronological cursors use `(createdAt, id)` where that is
+the feed's declared sort axis.
+
+## Ingested timestamps
+
+An ingested post's `createdAt` is asserted by someone else and must go through
+`clampFutureDate` (`utils/ingestTimestamp.ts`, the one guard every ingest path
+shares) — 1h for AT Protocol (author-asserted directly), 24h for ActivityPub (a
+third-party clock we cannot audit). Reject and fall back to `now`, never re-date
+to the clamp edge.
+
+Mention used to dual-write every local post and engagement to a per-user signed
+record chain (MTN), with user-operated Mention nodes and an outbound AT Protocol
+bridge reading it. All three were removed: PostgreSQL is the only store. What
+survives of the name is the feed engine under `src/mtn/` and the `mtn://` post
+URI that threadgates and postgates are keyed by (`createPostUri`).
+
+## External networks
+
+External behavior is behind `packages/backend/src/connectors`. The registry
+contains only enabled connectors and fans out with `Promise.allSettled`, so one
+network cannot abort another or the native post write.
+
+- ActivityPub is enabled unless `FEDERATION_ENABLED=false`.
+- AT Protocol discovery/read support is enabled unless `ATPROTO_ENABLED=false`.
+  Mention reads from AT Protocol; it does not publish to it. Live posts and
+  deletes come from one Jetstream subscription held by the scheduler leader
+  (`ATPROTO_JETSTREAM_ENABLED`); see [Bluesky ingestion](./bluesky-ingestion.md).
+
+Post creation depends on the registry's narrow federation interface, not a
+network implementation. Protocol DTOs at the connector boundary do not depend
+on the persistence layer.
+
+## Storage and degradation
+
+| Dependency | Use | Failure behavior |
+| --- | --- | --- |
+| PostgreSQL | Authoritative application data and schema version | Readiness fails |
+| Valkey/Redis | Cache, queues, rate limits, locks, Socket.IO adapter, presence | HTTP degrades quickly |
+| Oxy | Identity, settings, graph, service-backed media | Endpoint-specific degraded behavior |
+| Object storage | Canonical and cached media | Media operation fails or falls back |
+
+Redis health is tracked locally with a shared connection attempt and circuit
+breaking. Normal operations do not issue a `PING`. A process never assumes
+singleton leadership when it cannot acquire the distributed lock.
+
+All advisory caches use `utils/cache.ts`. Each Redis read, write, or entire
+multi-batch write has a one-second response deadline. A socket can remain
+`ready` while the server stops answering; on expiry the cache returns a miss
+or no-op and reports a transport timeout to the existing supervisor, which
+destroys the socket and reconnects with backoff. Later write batches are
+cancelled, and completed operations clear their deadline. Cached computations
+therefore return their authoritative result even when persisting it stalls.
+This is confined to advisory caches: it does not change distributed-lock,
+security, queue, or authoritative-write semantics. Node-redis's command timeout
+only covers its send queue and is not forwarded by `execAsPipeline`, so it is
+not a response deadline. `cacheDeadline.redis.test.ts` verifies stalled-ready
+reads and pipelines plus recovery against a disposable Redis instance selected
+with `TEST_REDIS_DEADLINE_URL`. Use a dedicated disposable instance: the test
+briefly pauses it, so never share it with other test workers or production.
+
+PostgreSQL is the only application database. Schema changes go through
+`drizzle/` and `src/db/migrate.ts`, and nothing else — no migrations-constants
+module, `MIGRATIONS` array or hot-path-index manifest. Ids in `text` id columns
+are either legacy 24-hex ids or uuid v7; the two spaces interleave under text
+collation, so no chronological query may order or page by id (see the id
+helpers in the external `@oxy.so/db` package and `mtn/feed/CursorBuilder.ts`).
+A few hundred legacy posts have no `authorship` row and still await their own
+backfill. Per-table conventions:
+`packages/backend/src/db/schema/CONVENTIONS.md`.
+`packages/backend/src/db/MIGRATION-CONTRACT.md` holds the two RDS
+prerequisites (PostGIS privilege, the ownership-probe trap). Production's
+`mention` role OWNS the `mention` database.
+
+## Process lifecycle
+
+Startup runs in this order:
+
+1. Validate configuration.
+2. Connect PostgreSQL. This is the only data store the process opens, and
+   `getDb()` throws until it resolves. The serving pool carries a 15 s
+   `statement_timeout` (`connectServingPostgres`); a leader job that reads
+   more raises it for its own transaction with `withStatementTimeout`, and
+   one-shot scripts open an unbounded pool with `connectPostgres`.
+3. In production, `assertPostgresMigrationsCurrent` refuses readiness
+   unless the deploy's migration one-shot has already brought the schema
+   current. Outside production the migrator is a developer command
+   (`bun run db:migrate`), so startup asserts nothing.
+4. Initialize Redis-backed optional capabilities.
+5. Register sockets, workers, outbox dispatchers, and leader-gated jobs.
+6. Start HTTP and mark readiness true.
+
+Shutdown first marks readiness false and stops accepting HTTP. It then stops
+schedulers, dispatchers and queue workers while their dependencies are still
+reachable, and finally closes Socket.IO, pub/sub, Redis, and PostgreSQL in
+parallel. A hard ten-second deadline prevents a stuck deployment drain.
+
+## Local topology
+
+`docker-compose.yml` reproduces the data requirements:
+
+```text
+postgres ──healthy──┐
+valkey ───healthy───┼──> migrate ──completed──> backend
+```
+
+The Postgres image is PostGIS-pinned to the major RDS runs, because generated
+`geography` columns require the extension before the migration that names the
+type. The migration container and backend use the same locally built backend
+image. Postgres and Valkey expose loopback-only ports and persist to named
+volumes. `docker-compose.postgres.yml` binds a separate database on port
+`5433` for `bun run dev:backend` and the test suite, while the full stack
+above runs on `5434` — both can be up at once. `DATABASE_URL` is required
+at boot.
+
+## Production topology
+
+```text
+                     ┌── api.mention.earth ──┐
+Internet ── ALB/CF ──┤                       ├── ECS mention :3000
+                     └── mention.earth ──────┘        │
+                                                      └── static web origin
+
+MCP client ── ALB ── mcp.mention.earth ── ECS mention-mcp :3100
+```
+
+`mention-mcp` keeps no Streamable HTTP session state, so the ALB may send each
+request to any task; only the deprecated `/sse` transport is bound to one task.
+
+The backend handles federation and OG routes before proxying remaining apex
+GET/HEAD requests to the static Expo origin. Hashed assets receive immutable
+caching; HTML revalidates. A hashed asset URL that resolves to HTML is rejected
+as a non-cacheable 404.
+
+Deploy workflows run only after successful CI on `main`. Images are addressed
+by commit SHA/digest. Production migrations run once before rollout, and the
+same artifact is used for migrations and the service.

@@ -1,0 +1,204 @@
+# Production deployment
+
+Mention deploys from the exact `main` commit that passed CI. Production
+workflows reject stale commits before every production mutation and serialize
+releases per service.
+
+## How a commit reaches a release
+
+Each deploy workflow has two triggers, and `.github/scripts/release-provenance.sh`
+gives every commit to exactly one of them:
+
+| Commit                                                    | Released by                                     | Proof it passed CI                                                                                                                         |
+| --------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Merged through the merge queue                            | `push` to main, immediately                     | A `merge_group` run of `ci.yml` for this exact SHA, whose `CI complete` job succeeded — the queue fast-forwards main to the tree it tested |
+| Anything else (admin bypass, direct push, queue disabled) | `workflow_run` of CI on push, after it succeeds | That CI run itself, as before                                                                                                              |
+
+The check is fail-closed: a push that is not merge-queue verified releases
+nothing, and an API error is a red run rather than a skip.
+
+CI answers the same question (`merge-queue-verified.sh`) on every push to main.
+A queue-verified push runs only the bundle baseline that queue entries restore
+and `CI complete`, which then accepts the tests, e2e and quality jobs (the
+lockfile check is a step of quality) as skipped because they already passed on
+this exact tree. Any other push runs
+the full suite, and if the question cannot be answered, the full suite runs.
+
+A release whose SHA is no longer main's head ends **green with a notice**, not
+red: nothing is deployed, `record-deployment` does not run, and the release of
+the newer head carries the change, because `deployment-scope.sh` diffs against
+the `deployed/<target>` tag rather than the previous commit.
+
+To retry a failed release, re-run the failed jobs of that deploy run. It is
+refused as stale once main has moved, which is correct: the newer head's release
+carries it.
+
+CI's `merge_group` trigger is inert until the merge-queue ruleset is enabled on
+`main`. Until then every commit takes the fallback path, exactly as before.
+
+## Surfaces
+
+| Surface                                          | Runtime                                    | ECR               | Workflow                                 |
+| ------------------------------------------------ | ------------------------------------------ | ----------------- | ---------------------------------------- |
+| `api.mention.earth` and the `mention.earth` apex | AWS ECS service `mention`, port `3000`     | `oxy/mention`     | `.github/workflows/deploy-aws.yml`       |
+| `mcp.mention.earth`                              | AWS ECS service `mention-mcp`, port `3100` | `oxy/mention-mcp` | `.github/workflows/deploy-mcp-aws.yml`   |
+| `shell.mention.earth` (static Expo web export)   | Cloudflare Worker `mention-frontend`       | —                 | `.github/workflows/deploy-frontends.yml` |
+
+The native apps ship outside AWS:
+
+| Surface                              | How it ships                                                                                                                                   | Workflow                                              |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Android binary (`earth.mention.app`) | Signed AAB + APK built on Oxy's build machine, GitHub release `android-v<version>`, only when `packages/frontend` `version` has no release yet | `.github/workflows/android-release.yml` (calls oxy's) |
+| OTA update (iOS and Android JS)      | Oxy Updates, channel `production`, on every push to main touching the app; GitHub trusted publishing, no secret                                | `.github/workflows/publish-update.yml`                |
+
+The app `version` is both the OTA runtime and the store build number
+(`@oxy.so/app-preset` derives `versionCode` 2.0.0 → 2000000): bump it for a
+native change, never for a JS-only one. Both builds take their environment
+from the eas.json `production` profile's `env`.
+
+GitHub Actions assumes the OIDC role `oxy-github-deploy` to push images and
+deploy. Runtime secrets live only in SSM `/oxy/mention/*` and
+`/oxy/mention-mcp/*`; no workflow writes them (see [Runtime secrets](#runtime-secrets)).
+
+The backend serves API, ActivityPub, OG shells and the apex proxy. ActivityPub
+paths (`/.well-known/*`, `/ap/*`, nodeinfo and inboxes) are routed directly to
+the backend and must never be redirected. The remaining apex web plane is
+proxied to `shell.mention.earth`, a Cloudflare Worker.
+
+`/.well-known/*` never reaches that proxy: the shell's SPA fallback answers any
+path with `200 text/html`. The backend serves every well-known document itself,
+including the Android App Links statement list and the iOS
+`apple-app-site-association` (`packages/backend/src/routes/appAssociation.routes.ts`),
+and answers any other well-known path with a JSON 404.
+
+Set repository variable `APPLE_TEAM_ID` (backend environment variable of the same name) to the signing team's ten-character identifier from
+Apple Developer Membership to enable the AASA document. Without it the route
+returns JSON 404. Set repository variable `ANDROID_APP_SIGNING_SHA256` to the comma-separated (no spaces),
+colon-delimited SHA-256 fingerprints from Play Console App integrity; these are
+added to the existing ecosystem release certificate used for direct APK installs.
+Malformed values and the public React Native template debug certificate are
+rejected at startup. Both documents are cached for one hour. Configuring these
+values still requires verification on a signed device build.
+
+That origin is not public. It serves nothing without the `X-Mention-Shell-Key`
+header and answers 403 otherwise, so the only ways to the app's bytes are the
+apex proxy and the OG shell renderer — both of them this backend. It is a Worker
+rather than a Cloudflare Pages project for exactly that reason: a Pages project
+always serves `<project>.pages.dev` with no way to switch it off, and
+`mention-frontend.pages.dev` was a second, unauthenticated copy of the app that
+was in no CORS allowlist, so a browser that found it booted the shell and had
+every API call blocked. Pages serves assets and runs no code; a Worker can refuse.
+
+The key, `MENTION_SHELL_ACCESS_KEY`, has two copies that must hold the same
+value: SSM `/oxy/mention/MENTION_SHELL_ACCESS_KEY`, which the backend task reads,
+and the GitHub secret of that name, which `deploy-frontends.yml` uploads to the
+Worker in the same operation as the code. Rotating it means writing both, then
+rolling the backend and running the frontend deploy (see
+[Runtime secrets](#runtime-secrets)). The backend refuses to boot without it in
+production rather than start into an apex that answers every page with the empty
+fallback shell.
+
+## Runtime secrets
+
+SSM Parameter Store is the ONE source of every backend and MCP runtime secret:
+`/oxy/mention/<NAME>` and `/oxy/mention-mcp/<NAME>`, `SecureString`, read by the
+task definition at task start. GitHub holds none of them, and
+`scripts/validate-workflows.mjs` fails CI if any workflow writes SSM or reads a
+repo secret outside its CI-only allowlist (`CLOUDFLARE_*` and the shell key for
+`deploy-frontends.yml`). Until
+2026-10-10 the deploys copied GitHub repo secrets into SSM on every run.
+
+```bash
+# set or rotate (the owner, never a workflow)
+aws ssm put-parameter --profile oxy --region us-west-2 --type SecureString \
+  --overwrite --name /oxy/mention/KLIPY_APP_KEY --value '…'
+# then roll the service so new tasks read it (or dispatch deploy-backend-config.yml)
+aws ecs update-service --profile oxy --region us-west-2 --cluster oxy-cluster \
+  --service mention --force-new-deployment
+```
+
+Two values have more than one home, and a rotation writes all of them first:
+
+- `MENTION_MCP_JWT_SECRET` is read from BOTH `/oxy/mention/` (backend) and
+  `/oxy/mention-mcp/` (MCP). Write both paths with the same value, then roll both
+  services.
+- `MENTION_SHELL_ACCESS_KEY` is also the shell Worker's key (above).
+
+A NEW secret is written to SSM FIRST and only then named in the deploy step's
+`TASK_SECRET_OVERRIDES_JSON` (in `deploy-aws.yml` and its copy in
+`deploy-backend-config.yml`): a task definition naming a parameter that does not
+exist registers fine and then cannot start. The full procedure is runbook 46
+("App runtime secrets live in SSM, not GitHub") in the oxy-infra repository.
+
+## Release transaction
+
+1. CI installs the frozen Bun lockfile and runs workspace checks, tests (the
+   backend suite in three shards whose coverage is merged and judged as one
+   suite), security review, workflow validation, the frontend bundle budget and
+   the Playwright browser gate against a locally served export.
+2. Backend and MCP images are built for ARM64, pushed to ECR and referenced by
+   immutable digest.
+3. The backend runs schema migrations as a one-shot task with the release
+   image. Web processes only assert the schema version for readiness.
+4. ECS deploys the new task definition with its circuit breaker enabled.
+5. Post-deploy smoke tests cover readiness, the anonymous feed, federation
+   endpoints, static assets and MCP authentication.
+6. The backend runs engagement reconciliation. A failed rollout, smoke test or
+   reconciliation restores the previous task definition. Target-group health
+   checks and stickiness are infrastructure-owned and are not mutated by an
+   application release.
+
+`mention-mcp` serves Streamable HTTP (`/mcp`) statelessly, so it needs no
+stickiness and any number of tasks may run at once, which every rollover does.
+Only the deprecated `/sse` + `/messages` transport keeps a session in one task's
+memory; see [`packages/mcp/README.md`](../packages/mcp/README.md#sessions-and-scaling).
+
+Cloudflare Pages first receives an immutable preview deployment, which is what
+the browser release gate runs against — a Worker has no per-branch preview URL,
+so the candidate origin the gate requires is still a Pages deployment. The exact
+preview URL is smoke-tested and browsed before the same assets are deployed to
+the shell Worker; the deploy is then smoke-tested with the key AND asserted to
+answer 403 without one, and a failed production smoke runs `wrangler rollback`
+to the Worker's previous version.
+
+## A deploy must not break the release before it
+
+The shell Worker serves exactly the assets of the version deployed last, so a
+deploy makes every hashed chunk of the previous release a 404. Anything still
+holding that release's `index.html` — an open tab, a browser cache, the backend's
+own copy — then boots into a blank app (`Requiring unknown module`). On
+2026-09-30 the backend's copy lived ten minutes per task and did exactly that.
+Three things prevent it, and none is sufficient alone:
+
+- **The backend's copy of the document is a shortcut, not a source of truth.**
+  `services/webShellDocument.ts` trusts it for 15 seconds, revalidates with the
+  Worker's ETag, and drops it the moment the apex proxy sees a hashed chunk the
+  Worker no longer has.
+- **The previous release's hashed files ship with the next one.**
+  `capture-live-static.sh` reads the release live on the Worker (the document,
+  then every chunk name in every script, transitively) and
+  `carry-previous-static.sh` copies it in before promotion (so N ships N and
+  N-1, never N-2). The source is the live origin, not a stored artifact: an
+  artifact that was never kept left the carry empty and the smoke failed on the
+  old document's stylesheet. It is best-effort: with nothing live, the release
+  ships only its own assets.
+- **The post-deploy smoke checks the promise, not a sample of it.**
+  `smoke-frontend.sh` samples the document repeatedly and requires every
+  `/_expo/static/` script and stylesheet any sample names to answer 200, not
+  HTML, and immutable.
+
+## Health and secrets
+
+- Liveness: `GET /health/live`.
+- Readiness: `GET /health/ready`; it checks `postgres`, `migrations` and `redis`,
+  and nothing else — a task that fails readiness is failing one of those three.
+- Redis degradation does not fail HTTP readiness, but singleton workers never
+  claim leadership without their distributed lock.
+- GitHub authenticates to AWS with OIDC. Runtime secrets are stored in SSM and
+  injected by ECS; no long-lived AWS key is required by the deployment
+  workflows.
+- Metrics reach CloudWatch (`Mention/Backend`) as EMF lines on stdout, which the
+  `awslogs` driver already ships; there is no metrics endpoint or scraper.
+
+Run migrations only through the deployment one-shot in production. Do not run
+them from web-process startup or from a developer workstation.
