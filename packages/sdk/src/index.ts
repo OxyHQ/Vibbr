@@ -1,9 +1,11 @@
 import { type ApiError, EventCard, EventId } from '@vibbr.co/contracts';
+import { getEventUrl } from './links';
+
+export { getEventUrl, isEventId, parseEventUrl } from './links';
 
 export type { EventCard } from '@vibbr.co/contracts';
 
 export const DEFAULT_BASE_URL = 'https://api.vibbr.co';
-const WEB_ORIGIN = 'https://vibbr.co';
 
 export class VibbrError extends Error {
   constructor(
@@ -68,23 +70,9 @@ export class VibbrClient {
   }
 }
 
-/** The public page of an event. */
+/** The public page of an event. Kept for callers of 0.1.0; prefer `getEventUrl`. */
 export function eventUrl(eventId: string): string {
-  return `${WEB_ORIGIN}/e/${EventId.parse(eventId)}`;
-}
-
-/** The event id inside a Vibbr event URL, or null when the text is not one. */
-export function parseEventUrl(value: string): string | null {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return null;
-  }
-  if (url.origin !== WEB_ORIGIN) return null;
-  const match = /^\/e\/([^/]+)\/?$/.exec(url.pathname);
-  const id = match?.[1];
-  return id && EventId.safeParse(id).success ? id : null;
+  return getEventUrl(EventId.parse(eventId));
 }
 
 async function toError(response: Response): Promise<VibbrError> {

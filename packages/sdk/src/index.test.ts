@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { eventUrl, parseEventUrl, VibbrClient, VibbrError } from './index';
+import { eventUrl, getEventUrl, parseEventUrl, VibbrClient, VibbrError } from './index';
 
 const ID = `evt_${'a'.repeat(24)}`;
 const card = {
@@ -60,6 +60,10 @@ describe('VibbrClient', () => {
 });
 
 describe('event urls', () => {
+  test('getEventUrl matches eventUrl and refuses a bad id', () => {
+    expect(getEventUrl(ID)).toBe(eventUrl(ID));
+    expect(() => getEventUrl('evt_1')).toThrow();
+  });
   test('round trips', () => {
     expect(parseEventUrl(eventUrl(ID))).toBe(ID);
   });
