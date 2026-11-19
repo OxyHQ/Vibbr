@@ -1,6 +1,6 @@
 # ADR 0002 — ActivityPub federation of events
 
-**Status:** proposed (slice 1 implemented; slices 2 and 3 wait on Oxy).
+**Status:** proposed (slice 1 implemented; slices 2 and 3 wait on the owner's choice in slice 2).
 **Date:** 2026-11-18.
 
 ## Context
@@ -24,8 +24,18 @@ Organizers are actors served under `vibbr.co` (`/ap/actors/<handle>`), with WebF
 `Create(Event)` activities and a followers collection, through `createActorRouter` and
 `createWebfingerRouter` from `@oxy.so/federation`.
 
-Blocked on: Oxy registering `vibbr.co` as a federation domain and holding the organizers' keys. Keys stay
-with Oxy (as for Mention); Vibbr never generates or stores an actor key. The Event routes are NOT mounted
+Blocked on a decision that is not a configuration entry (checked against oxy `origin/main`, 2026-11-19): Oxy
+federates its own users under ONE domain (`FEDERATION_DOMAIN`, `oxy.so`; `routes/webfinger.ts` answers only
+`isOwnFederationDomain`). There is no registry of per-product federation domains, so "registering `vibbr.co`"
+means a new capability in Oxy's identity service: actors on a second domain whose keys Oxy holds. The owner
+chooses between:
+
+1. **Oxy gains multi-domain actors** (organizers served as `@handle@vibbr.co`, keys held by Oxy). Right shape,
+   largest change, touches inter-product contracts: its own plan in the `oxy` repository.
+2. **Organizers federate as their Oxy accounts** (`@handle@oxy.so`), and Vibbr only supplies the events they
+   publish. No new domain; the actor is the person, not the organizer profile.
+
+Keys stay with Oxy either way (as for Mention); Vibbr never generates or stores an actor key. The Event routes are NOT mounted
 before the actors resolve: an `Event` whose `attributedTo` does not resolve is rejected by remote servers
 and is worse than not federating.
 
