@@ -9,6 +9,7 @@ import express, { type RequestHandler } from 'express';
 import { type Authority, oxyAuthority } from './authority';
 import { config } from './config';
 import { connectToDatabase } from './db';
+import { embedCors } from './middleware/embedCors';
 import { oxy } from './oxy';
 import { type PaymentProvider, resolvePaymentProvider } from './payments/provider';
 import { authedRoutes } from './routes/authed';
@@ -66,7 +67,7 @@ export function createApp(deps: AppDependencies = {}): express.Express {
     }
   });
 
-  app.use('/v1', publicRoutes(clock));
+  app.use('/v1', embedCors(config.embedOrigins), publicRoutes(clock));
   if (!deps.authenticate) app.use(createOxyRateLimit(oxy));
   app.use(
     '/v1',

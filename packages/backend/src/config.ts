@@ -20,6 +20,8 @@ export const config = {
     if (production) return required('TICKET_CODE_SECRET');
     return 'vibbr-development-ticket-code-secret-not-for-production';
   },
+  /** First-party sites that may read public event data from the browser (Mention's event cards). */
+  embedOrigins: ['https://mention.earth', 'https://www.mention.earth'],
   /** Minutes an unpaid online reservation holds its tickets. */
   reservationMinutes: 15,
   /** Minutes a waitlist offer holds its tickets. */
