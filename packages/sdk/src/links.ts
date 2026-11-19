@@ -26,7 +26,9 @@ export function parseEventUrl(value: string): string | null {
   } catch {
     return null;
   }
-  if (url.origin !== WEB_ORIGIN) return null;
+  // `origin` ignores credentials, so `https://user@vibbr.co/e/<id>` would pass: a link with
+  // embedded credentials is not a canonical event URL.
+  if (url.origin !== WEB_ORIGIN || url.username !== '' || url.password !== '') return null;
   const match = /^\/e\/([^/]+)\/?$/.exec(url.pathname);
   const id = match?.[1];
   return id && isEventId(id) ? id : null;

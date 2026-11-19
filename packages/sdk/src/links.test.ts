@@ -15,6 +15,10 @@ describe('links (no schema runtime)', () => {
     expect(parseEventUrl(`https://vibbr.co/o/${ID}`)).toBeNull();
     expect(parseEventUrl('nope')).toBeNull();
   });
+  test('ignores a URL carrying credentials, though its origin matches', () => {
+    expect(parseEventUrl(`https://user@vibbr.co/e/${ID}`)).toBeNull();
+    expect(parseEventUrl(`https://user:pass@vibbr.co/e/${ID}`)).toBeNull();
+  });
   test('this module imports nothing at runtime', async () => {
     const source = await Bun.file(new URL('./links.ts', import.meta.url)).text();
     expect(source).not.toMatch(/^\s*import\s/m);
