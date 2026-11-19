@@ -1,6 +1,8 @@
-import { type ApiError, EventCard, EventId } from '@vibbr.co/contracts';
-import { getEventUrl } from './links';
+import type { ApiError, EventCard } from '@vibbr.co/contracts';
+import { isEventCard } from './guards';
+import { getEventUrl, isEventId } from './links';
 
+export { isEventCard } from './guards';
 export { getEventUrl, isEventId, parseEventUrl } from './links';
 
 export type { EventCard } from '@vibbr.co/contracts';
@@ -40,12 +42,15 @@ export class VibbrClient {
 
   /** The card for one public event. Throws `VibbrError` with code `not_found` for an unknown or unpublished id. */
   async getEventCard(eventId: string): Promise<EventCard> {
-    const id = EventId.parse(eventId);
+    const id = requireEventId(eventId);
     const response = await this.fetchImpl(`${this.baseUrl}/v1/events/${id}/card`, {
       headers: { accept: 'application/json' },
     });
     if (!response.ok) throw await toError(response);
-    return EventCard.parse(await response.json());
+    const body: unknown = await response.json();
+    if (!isEventCard(body))
+      throw new VibbrError(502, 'invalid_response', 'Vibbr sent an event card in an unknown shape');
+    return body;
   }
 
   /**
@@ -53,7 +58,7 @@ export class VibbrClient {
    * absent from the result; the order of `eventIds` is kept.
    */
   async getEventCards(eventIds: readonly string[]): Promise<EventCard[]> {
-    const ids = [...new Set(eventIds.map((id) => EventId.parse(id)))];
+    const ids = [...new Set(eventIds.map(requireEventId))];
     if (ids.length === 0) return [];
     if (ids.length > 50) throw new RangeError('at most 50 events per request');
     const response = await this.fetchImpl(`${this.baseUrl}/v1/events/cards?ids=${ids.join(',')}`, {
@@ -61,7 +66,7 @@ export class VibbrClient {
     });
     if (!response.ok) throw await toError(response);
     const body = (await response.json()) as { items?: unknown };
-    const items = Array.isArray(body.items) ? body.items.map((item) => EventCard.parse(item)) : [];
+    const items = Array.isArray(body.items) ? body.items.filter(isEventCard) : [];
     const byId = new Map(items.map((card) => [card.id, card]));
     return ids.flatMap((id) => {
       const card = byId.get(id);
@@ -72,7 +77,12 @@ export class VibbrClient {
 
 /** The public page of an event. Kept for callers of 0.1.0; prefer `getEventUrl`. */
 export function eventUrl(eventId: string): string {
-  return getEventUrl(EventId.parse(eventId));
+  return getEventUrl(eventId);
+}
+
+function requireEventId(value: string): string {
+  if (!isEventId(value)) throw new RangeError('not a Vibbr event id');
+  return value;
 }
 
 async function toError(response: Response): Promise<VibbrError> {
