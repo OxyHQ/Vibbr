@@ -36,7 +36,7 @@
     },
     "packages/contracts": {
       "name": "@vibbr.co/contracts",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "zod": "catalog:",
       },
@@ -129,7 +129,7 @@
     },
     "packages/sdk": {
       "name": "@vibbr.co/sdk",
-      "version": "0.1.0",
+      "version": "0.1.2",
       "dependencies": {
         "@vibbr.co/contracts": "workspace:*",
       },
