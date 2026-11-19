@@ -20,6 +20,11 @@ export class VibbrError extends Error {
   }
 }
 
+export interface RequestOptions {
+  /** Cancels the request, as a list does when its card scrolls away. */
+  readonly signal?: AbortSignal;
+}
+
 export interface VibbrClientOptions {
   /** API origin. Defaults to `https://api.vibbr.co`. */
   readonly baseUrl?: string;
@@ -41,10 +46,11 @@ export class VibbrClient {
   }
 
   /** The card for one public event. Throws `VibbrError` with code `not_found` for an unknown or unpublished id. */
-  async getEventCard(eventId: string): Promise<EventCard> {
+  async getEventCard(eventId: string, options: RequestOptions = {}): Promise<EventCard> {
     const id = requireEventId(eventId);
     const response = await this.fetchImpl(`${this.baseUrl}/v1/events/${id}/card`, {
       headers: { accept: 'application/json' },
+      signal: options.signal,
     });
     if (!response.ok) throw await toError(response);
     const body: unknown = await response.json();
@@ -57,7 +63,10 @@ export class VibbrClient {
    * Cards for several events in one request. Unknown or unpublished ids are
    * absent from the result; the order of `eventIds` is kept.
    */
-  async getEventCards(eventIds: readonly string[]): Promise<EventCard[]> {
+  async getEventCards(
+    eventIds: readonly string[],
+    options: RequestOptions = {},
+  ): Promise<EventCard[]> {
     const ids = [...new Set(eventIds.map(requireEventId))];
     if (ids.length === 0) return [];
     if (ids.length > 50) throw new RangeError('at most 50 events per request');

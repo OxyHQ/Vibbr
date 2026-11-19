@@ -39,6 +39,19 @@ describe('VibbrClient', () => {
     await expect(client.getEventCard(ID)).rejects.toBeInstanceOf(VibbrError);
   });
 
+  test('passes the abort signal to the request', async () => {
+    let seen: AbortSignal | null | undefined;
+    const client = new VibbrClient({
+      fetch: (async (_url: unknown, init?: RequestInit) => {
+        seen = init?.signal;
+        return Response.json(card);
+      }) as unknown as typeof fetch,
+    });
+    const controller = new AbortController();
+    await client.getEventCard(ID, { signal: controller.signal });
+    expect(seen).toBe(controller.signal);
+  });
+
   test('rejects a malformed id before any request', async () => {
     const client = new VibbrClient({
       fetch: (async () => {
