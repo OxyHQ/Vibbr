@@ -50,6 +50,9 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
           NODE_ENV: production
+          # Public (it travels inside the bundle). Set once with
+          # `scripts/register-oxy-app.mjs`: gh variable set OXY_CLIENT_ID.
+          EXPO_PUBLIC_OXY_CLIENT_ID: ${{ vars.OXY_CLIENT_ID }}
 
       # Both lines this checks are silent one-line regressions: without
       # `workers_dev = false` a second copy of Vibbr appears on a workers.dev
