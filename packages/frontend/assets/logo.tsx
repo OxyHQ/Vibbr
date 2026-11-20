@@ -2,7 +2,7 @@ import type { StyleProp, ViewStyle } from 'react-native';
 import Svg, { G, Path } from 'react-native-svg';
 
 /**
- * Vibbr's brand mark: a ticket with its tear-off line. Not an icon: glyphs come from Bloom
+ * Vibbr's brand mark: a ticket with a star. Not an icon: glyphs come from Bloom
  * (`@oxy.so/bloom/icons`). Callers pass the resolved colour, as with a Bloom icon's `fill`.
  * It is drawn turned 180 degrees, as every Vibbr icon is.
  */
@@ -16,10 +16,10 @@ export function VibbrLogo({
   style?: StyleProp<ViewStyle>;
 }) {
   return (
-    <Svg viewBox="0 0 24 24" width={size} height={size} style={style}>
-      <G rotation={180} originX={12} originY={12}>
+    <Svg viewBox="0 0 48 48" width={size} height={size} style={style}>
+      <G rotation={180} originX={24} originY={24}>
         <Path
-          d="M12.04,17.29q0.54,0 0.9-0.36t0.37-0.89t-0.36-0.9t-0.9-0.37q-0.53,0-0.9,0.36t-0.37,0.9q0,0.53 0.36,0.89t0.89,0.37Zm0-4.07q0.54,0 0.9-0.36t0.37-0.89t-0.36-0.9t-0.9-0.37q-0.53,0-0.9,0.36t-0.37,0.9q0,0.53 0.36,0.9t0.89,0.37Zm0-4.08q0.54,0 0.9-0.36t0.37-0.89q0-0.54-0.36-0.9t-0.9-0.36q-0.53,0-0.9,0.36T10.78,7.87q0,0.53 0.36,0.9t0.89,0.37ZM20.1,20.85H3.95q-1.2,0-2.01-0.82T1.12,18.02V13.46q0.79,0 1.42-0.35T3.15,12q0-0.78-0.62-1.14T1.12,10.49V5.95q0-1.2 0.82-2.01T3.95,3.12H20.1q1.2,0 2.01,0.82t0.82,2.01v4.55q-0.79,0-1.42,0.37T20.88,12q0,0.77 0.63,1.12t1.42,0.35v4.55q0,1.2-0.82,2.01T20.1,20.85Z"
+          d="M19.9,30.65L24,27.4l4,3.15L26.45,25.6l4.15-3.25H25.65l-1.65-5l-1.65,5H17.4l4.1,3.25l-1.6,5.05ZM9.15,38.15q-1.4,0-2.38-0.98T5.8,34.8v-4q0-0.3 0.15-0.68t0.5-0.57Q8.05,28.7 9,27.28T9.95,24q0-1.9-0.95-3.33T6.45,18.4q-0.35-0.2-0.5-0.57T5.8,17.15v-4q0-1.4 0.97-2.38T9.15,9.8H38.9q1.4,0 2.38,0.98t0.97,2.38v4q0,0.3-0.15,0.68T41.65,18.4q-1.65,0.85-2.6,2.27T38.1,24q0,1.85 0.95,3.27t2.6,2.28q0.3,0.2 0.45,0.57t0.15,0.68v4q0,1.4-0.97,2.38T38.9,38.15H9.15Z"
           fill={color}
         />
       </G>
