@@ -52,16 +52,22 @@ export default function Search() {
           </TextField>
         </View>
         {!active ? (
-          <Problem title={t('search.title')} description={t('search.hint')} />
+          <Problem sticker="searchIdle" title={t('search.title')} description={t('search.hint')} />
         ) : query.isPending ? (
           <Loading />
         ) : query.isError ? (
           <Problem
+            sticker="loadError"
             title={t('discover.error')}
+            description={t('common.loadErrorHint')}
             action={{ label: t('discover.retry'), onPress: () => void query.refetch() }}
           />
         ) : items.length === 0 ? (
-          <Problem title={t('discover.empty')} description={t('discover.emptyHint')} />
+          <Problem
+            sticker="searchNoResults"
+            title={t('search.noResults')}
+            description={t('search.noResultsHint')}
+          />
         ) : (
           items.map((card) => <EventCardView key={card.id} card={card} />)
         )}

@@ -38,9 +38,23 @@ export default function TicketScreen() {
     queryFn: () => api.events.resale(eventId).then((r) => r.items),
   });
 
-  if (!id) return <Problem title={t('errors.not_found')} />;
+  if (!id)
+    return (
+      <Problem
+        sticker="notFound"
+        title={t('tickets.notFound')}
+        description={t('tickets.notFoundHint')}
+      />
+    );
   if (ticket.isPending) return <Loading />;
-  if (ticket.isError || !ticket.data) return <Problem title={t('errors.not_found')} />;
+  if (ticket.isError || !ticket.data)
+    return (
+      <Problem
+        sticker="notFound"
+        title={t('tickets.notFound')}
+        description={t('tickets.notFoundHint')}
+      />
+    );
 
   const data = ticket.data;
   const mine = (listings.data ?? []).find((l) => l.ticketId === data.id);

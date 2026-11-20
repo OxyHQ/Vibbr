@@ -56,11 +56,17 @@ export default function Tickets() {
           <Loading />
         ) : tickets.isError ? (
           <Problem
+            sticker="loadError"
             title={t('discover.error')}
+            description={t('common.loadErrorHint')}
             action={{ label: t('discover.retry'), onPress: () => void tickets.refetch() }}
           />
         ) : (tickets.data ?? []).length === 0 ? (
-          <Problem title={t('tickets.empty')} description={t('tickets.emptyHint')} />
+          <Problem
+            sticker="ticketsEmpty"
+            title={t('tickets.empty')}
+            description={t('tickets.emptyHint')}
+          />
         ) : (
           tickets.data.map((ticket) => <TicketRow key={ticket.id} ticket={ticket} />)
         )}
