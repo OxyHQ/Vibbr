@@ -1,6 +1,6 @@
 # ADR 0002 — ActivityPub federation of events
 
-**Status:** proposed (slice 1 implemented; slices 2 and 3 wait on the owner's choice in slice 2).
+**Status:** accepted, option 2 (slice 1 implemented; slices 2 and 3 wait on Vibbr's registration in Oxy).
 **Date:** 2026-11-18.
 
 ## Context
@@ -52,6 +52,14 @@ retract. Delivery re-checks live authority per `@oxy.so/federation`'s `authorize
 The queue is the open decision: Mention uses BullMQ on Redis. Vibbr runs no Redis today; a Postgres-backed
 outbox table (claim with `FOR UPDATE SKIP LOCKED`, as the housekeeping jobs do) avoids a new service.
 Decide when slice 3 starts.
+
+### Decision (2026-11-20): option 2
+
+The owner delegated the choice ("lo que creas mejor"); option 2 is taken. Organizers federate as their Oxy
+accounts (`@handle@oxy.so`), served by Oxy; Vibbr serves their outbox and the `Event` objects and delivers
+through Oxy's signing. It needs no new Oxy capability, only Vibbr's entry in oxy's first-party registry
+(`actsForPeople`, acting with `actingFor`, ADR 0066) and the Oxy application registration of phase 7. Slices
+2 and 3 start when that registration exists; until then Vibbr is not federated.
 
 ## Consequences
 
