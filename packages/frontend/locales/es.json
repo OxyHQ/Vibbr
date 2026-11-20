@@ -19,8 +19,8 @@
   },
   "discover": {
     "title": "Qué hay",
-    "empty": "No hay eventos",
-    "emptyHint": "Prueba con otra ciudad, día o categoría.",
+    "empty": "Aún no hay nada",
+    "emptyHint": "Ningún evento coincide ahora. Prueba otra ciudad u otro día, o quita los filtros.",
     "free": "Eventos gratis",
     "nearby": "Cerca de mí",
     "anyCategory": "Todo",
@@ -30,9 +30,11 @@
   },
   "search": {
     "placeholder": "Busca eventos, artistas, lugares",
-    "title": "Buscar",
+    "title": "Encuentra un plan",
     "city": "Ciudad",
-    "hint": "Escribe algo para buscar."
+    "hint": "Busca por evento, artista, sala o ciudad.",
+    "noResults": "Sin resultados",
+    "noResultsHint": "No encontramos nada para eso. Revisa la ortografía o prueba algo más amplio."
   },
   "category": {
     "music": "Música",
@@ -69,12 +71,13 @@
     "share": "Compartir",
     "by": "De {{name}}",
     "ageMinimum": "+{{age}}",
-    "notFound": "Este evento no existe o no es público.",
+    "notFound": "No encontramos ese evento",
     "resale": "Reventa",
     "resaleEmpty": "Nadie revende entradas de este evento.",
     "joinWaitlist": "Apuntarme a la lista de espera",
     "onWaitlist": "Estás en la lista de espera (n.º {{position}})",
-    "leaveWaitlist": "Salir de la lista de espera"
+    "leaveWaitlist": "Salir de la lista de espera",
+    "notFoundHint": "Puede que se haya cancelado o que no sea público. Vuelve y sigue explorando."
   },
   "payment": {
     "free": "Gratis",
@@ -98,8 +101,8 @@
   },
   "tickets": {
     "title": "Tus entradas",
-    "empty": "Aún no tienes entradas",
-    "emptyHint": "Cuando consigas entradas aparecerán aquí.",
+    "empty": "Todavía no tienes entradas",
+    "emptyHint": "Cuando consigas una, aparecerá aquí, lista para enseñarla en la puerta.",
     "show": "Mostrar en la puerta",
     "codeHint": "El código se renueva cada pocos segundos.",
     "used": "Usada",
@@ -118,11 +121,13 @@
     "bought": "La entrada es tuya",
     "holder": "Titular: {{name}}",
     "paidAtDoor": "Pago en taquilla",
-    "paymentStatus": "Pago: {{status}}"
+    "paymentStatus": "Pago: {{status}}",
+    "notFound": "No encontramos esa entrada",
+    "notFoundHint": "Puede que sea de otra cuenta."
   },
   "manage": {
     "title": "Organizar",
-    "empty": "Aún no has organizado nada",
+    "empty": "Aún no hay eventos",
     "createOrganizer": "Crea tu perfil de organizador",
     "organizerName": "Nombre",
     "organizerHandle": "Usuario",
@@ -176,7 +181,10 @@
     "scan": "Abrir el escáner de puerta",
     "staff": "Personal de puerta",
     "conflict": "Alguien cambió este evento. Recarga e inténtalo de nuevo.",
-    "invalid": "Revisa los campos marcados."
+    "invalid": "Revisa los campos marcados.",
+    "emptyHint": "Crea tu primer evento y empieza a vender o repartir entradas.",
+    "forbidden": "No puedes gestionar este evento",
+    "forbiddenHint": "Solo el equipo del organizador puede editarlo."
   },
   "scan": {
     "title": "Puerta",
@@ -199,7 +207,7 @@
     "title": "Tú",
     "signOut": "Cerrar sesión",
     "language": "Idioma",
-    "signedOut": "No has iniciado sesión"
+    "signedOut": "Inicia sesión para ver tu perfil y tus ajustes."
   },
   "errors": {
     "generic": "Algo salió mal. Inténtalo de nuevo.",
@@ -220,7 +228,8 @@
     "done": "Hecho",
     "back": "Atrás",
     "loading": "Cargando…",
-    "free": "Gratis"
+    "free": "Gratis",
+    "loadErrorHint": "Revisa tu conexión e inténtalo de nuevo."
   },
   "rightBar": {
     "upcoming": "Próximamente"

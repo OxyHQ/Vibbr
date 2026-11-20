@@ -144,7 +144,9 @@ export default function Organize() {
     return page(
       t('tabs.organize'),
       <Problem
+        sticker="loadError"
         title={t('discover.error')}
+        description={t('common.loadErrorHint')}
         action={{ label: t('discover.retry'), onPress: () => void organizers.refetch() }}
       />,
     );
@@ -155,7 +157,11 @@ export default function Organize() {
     events.isPending ? (
       <Loading />
     ) : (events.data ?? []).length === 0 ? (
-      <Problem title={t('manage.empty')} />
+      <Problem
+        sticker="organizeEmpty"
+        title={t('manage.empty')}
+        description={t('manage.emptyHint')}
+      />
     ) : (
       events.data?.map((e) => <EventRow key={e.id} event={e} />)
     ),

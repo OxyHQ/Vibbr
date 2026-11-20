@@ -59,11 +59,17 @@ export default function Discover() {
           <Loading />
         ) : query.isError ? (
           <Problem
+            sticker="loadError"
             title={t('discover.error')}
+            description={t('common.loadErrorHint')}
             action={{ label: t('discover.retry'), onPress: () => void query.refetch() }}
           />
         ) : items.length === 0 ? (
-          <Problem title={t('discover.empty')} description={t('discover.emptyHint')} />
+          <Problem
+            sticker="discoverEmpty"
+            title={t('discover.empty')}
+            description={t('discover.emptyHint')}
+          />
         ) : (
           <>
             {items.map((card) => (

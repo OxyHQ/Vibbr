@@ -172,9 +172,16 @@ export default function ManageEvent() {
   });
   const cancel = useMutation({ mutationFn: () => api.manage.cancel(id), onSuccess: refresh });
 
-  if (!id) return <Problem title={t('event.notFound')} />;
+  if (!id) return <Problem sticker="notFound" title={t('event.notFound')} />;
   if (event.isPending) return <Loading />;
-  if (event.isError || !event.data) return <Problem title={t('errors.forbidden')} />;
+  if (event.isError || !event.data)
+    return (
+      <Problem
+        sticker="notFound"
+        title={t('manage.forbidden')}
+        description={t('manage.forbiddenHint')}
+      />
+    );
   const e = event.data;
   const conflict = publish.isError && errorCode(publish.error) === 'revision_conflict';
 

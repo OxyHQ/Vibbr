@@ -19,20 +19,22 @@
   },
   "discover": {
     "title": "What's on",
-    "empty": "No events found",
-    "emptyHint": "Try another city, day or category.",
+    "empty": "Nothing on yet",
+    "emptyHint": "No events match right now. Try another city or day, or clear the filters.",
     "free": "Free events",
     "nearby": "Near me",
     "anyCategory": "All",
-    "error": "We could not load events",
+    "error": "We couldn't load events",
     "retry": "Try again",
     "loadMore": "Show more"
   },
   "search": {
     "placeholder": "Search events, artists, places",
-    "title": "Search",
+    "title": "Find something to do",
     "city": "City",
-    "hint": "Type something to search."
+    "hint": "Search by event, artist, venue or city.",
+    "noResults": "No matches",
+    "noResultsHint": "We found nothing for that. Check the spelling or try something broader."
   },
   "category": {
     "music": "Music",
@@ -69,12 +71,13 @@
     "share": "Share",
     "by": "By {{name}}",
     "ageMinimum": "{{age}}+",
-    "notFound": "This event does not exist or is not public.",
+    "notFound": "We can't find that event",
     "resale": "Resale tickets",
     "resaleEmpty": "Nobody is reselling tickets for this event.",
     "joinWaitlist": "Join the waitlist",
     "onWaitlist": "You're on the waitlist (#{{position}})",
-    "leaveWaitlist": "Leave the waitlist"
+    "leaveWaitlist": "Leave the waitlist",
+    "notFoundHint": "It may have been cancelled or isn't public. Go back and keep exploring."
   },
   "payment": {
     "free": "Free",
@@ -99,7 +102,7 @@
   "tickets": {
     "title": "Your tickets",
     "empty": "No tickets yet",
-    "emptyHint": "When you get tickets they will be here.",
+    "emptyHint": "When you get a ticket it will be here, ready to show at the door.",
     "show": "Show at the door",
     "codeHint": "The code refreshes every few seconds.",
     "used": "Used",
@@ -118,11 +121,13 @@
     "bought": "Ticket is yours",
     "holder": "Holder: {{name}}",
     "paidAtDoor": "Pay at the door",
-    "paymentStatus": "Payment: {{status}}"
+    "paymentStatus": "Payment: {{status}}",
+    "notFound": "We can't find that ticket",
+    "notFoundHint": "It may belong to another account."
   },
   "manage": {
     "title": "Organize",
-    "empty": "You haven't organized anything yet",
+    "empty": "No events yet",
     "createOrganizer": "Create your organizer profile",
     "organizerName": "Name",
     "organizerHandle": "Handle",
@@ -176,7 +181,10 @@
     "scan": "Open the door scanner",
     "staff": "Door staff",
     "conflict": "Someone changed this event. Reload and try again.",
-    "invalid": "Check the highlighted fields."
+    "invalid": "Check the highlighted fields.",
+    "emptyHint": "Create your first event and start selling or handing out tickets.",
+    "forbidden": "You can't manage this event",
+    "forbiddenHint": "Only the organizer's team can edit it."
   },
   "scan": {
     "title": "Door",
@@ -199,7 +207,7 @@
     "title": "You",
     "signOut": "Sign out",
     "language": "Language",
-    "signedOut": "You're not signed in"
+    "signedOut": "Sign in to see your profile and settings."
   },
   "errors": {
     "generic": "Something went wrong. Try again.",
@@ -220,7 +228,8 @@
     "done": "Done",
     "back": "Back",
     "loading": "Loading…",
-    "free": "Free"
+    "free": "Free",
+    "loadErrorHint": "Check your connection and try again."
   },
   "rightBar": {
     "upcoming": "Coming up"

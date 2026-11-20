@@ -34,12 +34,14 @@ export default function EventScreen() {
   const setAttendance = useSetAttendance(id);
   const resaleActions = useResaleActions(id);
 
-  if (!id) return <Problem title={t('event.notFound')} />;
+  if (!id) return <Problem sticker="notFound" title={t('event.notFound')} />;
   if (event.isPending) return <Loading />;
   if (event.isError || !event.data)
     return (
       <Problem
+        sticker="notFound"
         title={t('event.notFound')}
+        description={t('event.notFoundHint')}
         action={{ label: t('common.back'), onPress: () => router.back() }}
       />
     );

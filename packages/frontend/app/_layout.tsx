@@ -6,8 +6,10 @@ import { expoRouterScrollAdapter } from '@oxy.so/bloom/scroll/expo-router';
 import { OverlayInertBoundary, PortalOutlet, PortalProvider } from '@oxy.so/bloom/portal';
 import { SurfaceHost } from '@oxy.so/bloom/surfaces';
 import { OxyProvider } from '@oxy.so/services/ui/client';
+import { createStickersClient } from '@oxy.so/stickers';
+import { StickersProvider } from '@oxy.so/stickers/react';
 import { Slot } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { initialWindowMetrics, SafeAreaProvider } from 'react-native-safe-area-context';
@@ -25,6 +27,8 @@ import { queryClient } from '@/lib/queryClient';
 export default function RootLayout() {
   const [ready, setReady] = useState(false);
   const back = useBackWithFallback('/');
+  // One sticker client per OxyServices: it memoizes resolved stickers for the app's lifetime.
+  const stickersClient = useMemo(() => createStickersClient(oxyServices), []);
   useEffect(() => {
     let cancelled = false;
     void initI18n().then(() => {
@@ -65,13 +69,15 @@ export default function RootLayout() {
             }}
           >
             <I18nextProvider i18n={appI18n}>
-              <PortalProvider>
-                <OverlayInertBoundary>
-                  <Slot />
-                </OverlayInertBoundary>
-                <PortalOutlet />
-                <SurfaceHost />
-              </PortalProvider>
+              <StickersProvider client={stickersClient}>
+                <PortalProvider>
+                  <OverlayInertBoundary>
+                    <Slot />
+                  </OverlayInertBoundary>
+                  <PortalOutlet />
+                  <SurfaceHost />
+                </PortalProvider>
+              </StickersProvider>
             </I18nextProvider>
           </OxyProvider>
         </BloomProvider>
