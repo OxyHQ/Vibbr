@@ -1,9 +1,10 @@
 import { EventId } from '@vibbr.co/contracts';
 import { Image } from 'expo-image';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import { Platform, ScrollView, Share, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Platform, Share, Text, View } from 'react-native';
+import { PageHeader } from '@oxy.so/bloom/page-header';
+import { Screen, ScreenScrollView } from '@oxy.so/bloom/screen';
 import { Button } from '@oxy.so/bloom/button';
 import { Chip } from '@oxy.so/bloom/chip';
 import { Loading, Problem } from '@/components/Centered';
@@ -25,7 +26,6 @@ export default function EventScreen() {
   const id = EventId.safeParse(raw).success ? (raw as string) : '';
   const { t, i18n } = useTranslation();
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const { signedIn } = useViewer();
   const event = useEvent(id);
   const types = useEventTicketTypes(id);
@@ -56,12 +56,8 @@ export default function EventScreen() {
   };
 
   return (
-    <>
-      <Stack.Screen options={{ title: e.title, headerShown: true }} />
-      <ScrollView
-        className="flex-1 bg-background"
-        contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
-      >
+    <Screen header={<PageHeader title={e.title} />}>
+      <ScreenScrollView contentContainerClassName="pb-10">
         {e.coverUrl ? (
           <Image
             source={{ uri: e.coverUrl }}
@@ -200,7 +196,7 @@ export default function EventScreen() {
             </View>
           ) : null}
         </View>
-      </ScrollView>
-    </>
+      </ScreenScrollView>
+    </Screen>
   );
 }

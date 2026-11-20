@@ -1,11 +1,13 @@
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Text, View } from 'react-native';
 import type { ScanResult } from '@vibbr.co/contracts';
+import { PageHeader } from '@oxy.so/bloom/page-header';
+import { Screen } from '@oxy.so/bloom/screen';
 import { Button } from '@oxy.so/bloom/button';
 import { api } from '@/lib/api';
 import { errorStatus } from '@/lib/errors';
@@ -86,8 +88,7 @@ export default function Scanner() {
   }
 
   return (
-    <>
-      <Stack.Screen options={{ title: t('scan.title'), headerShown: true }} />
+    <Screen scroll="none" header={<PageHeader title={t('scan.title')} />}>
       <View className="flex-1 bg-black">
         {queued ? (
           <View className="flex-1 items-center justify-center gap-3 bg-amber-600 p-6">
@@ -135,6 +136,6 @@ export default function Scanner() {
           </>
         )}
       </View>
-    </>
+    </Screen>
   );
 }

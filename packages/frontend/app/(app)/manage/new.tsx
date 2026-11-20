@@ -1,10 +1,11 @@
 import { EVENT_CATEGORIES, type EventInput } from '@vibbr.co/contracts';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ScrollView, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Text, View } from 'react-native';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { PageHeader } from '@oxy.so/bloom/page-header';
+import { Screen, ScreenScrollView } from '@oxy.so/bloom/screen';
 import { Button } from '@oxy.so/bloom/button';
 import { Chip } from '@oxy.so/bloom/chip';
 import { DatePicker } from '@oxy.so/bloom/date-picker';
@@ -28,7 +29,6 @@ export default function NewEvent() {
   const { organizerId } = useLocalSearchParams<{ organizerId: string }>();
   const { t } = useTranslation();
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const client = useQueryClient();
 
   const [title, setTitle] = useState('');
@@ -105,12 +105,8 @@ export default function NewEvent() {
   });
 
   return (
-    <>
-      <Stack.Screen options={{ title: t('manage.newEvent'), headerShown: true }} />
-      <ScrollView
-        className="flex-1 bg-background"
-        contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
-      >
+    <Screen header={<PageHeader title={t('manage.newEvent')} />}>
+      <ScreenScrollView contentContainerClassName="pb-10">
         <View className="mx-auto w-full max-w-[640px] gap-6 p-4">
           <Section title={t('manage.eventTitle')}>
             <TextField>
@@ -267,7 +263,7 @@ export default function NewEvent() {
           <FieldError message={create.isError ? errorMessage(create.error, t) : null} />
           <Text className="text-xs text-muted-foreground">{t('manage.draft')}</Text>
         </View>
-      </ScrollView>
-    </>
+      </ScreenScrollView>
+    </Screen>
   );
 }

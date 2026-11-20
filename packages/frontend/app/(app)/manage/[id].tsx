@@ -1,10 +1,11 @@
 import { EventId, type PaymentMode, type TicketTypeInput } from '@vibbr.co/contracts';
-import { Link, Stack, useLocalSearchParams } from 'expo-router';
+import { Link, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ScrollView, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Text, View } from 'react-native';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { PageHeader } from '@oxy.so/bloom/page-header';
+import { Screen, ScreenScrollView } from '@oxy.so/bloom/screen';
 import { Button } from '@oxy.so/bloom/button';
 import { Chip } from '@oxy.so/bloom/chip';
 import {
@@ -157,7 +158,6 @@ export default function ManageEvent() {
   const raw = useLocalSearchParams<{ id: string }>().id;
   const id = EventId.safeParse(raw).success ? (raw as string) : '';
   const { t, i18n } = useTranslation();
-  const insets = useSafeAreaInsets();
   const client = useQueryClient();
   const event = useManagedEvent(id);
   const types = useManagedTicketTypes(id);
@@ -179,12 +179,8 @@ export default function ManageEvent() {
   const conflict = publish.isError && errorCode(publish.error) === 'revision_conflict';
 
   return (
-    <>
-      <Stack.Screen options={{ title: e.title, headerShown: true }} />
-      <ScrollView
-        className="flex-1 bg-background"
-        contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
-      >
+    <Screen header={<PageHeader title={e.title} />}>
+      <ScreenScrollView contentContainerClassName="pb-10">
         <View className="mx-auto w-full max-w-[640px] gap-6 p-4">
           <View className="gap-2">
             <Text className="text-2xl font-bold text-foreground">{e.title}</Text>
@@ -277,7 +273,7 @@ export default function ManageEvent() {
             ) : null}
           </Section>
         </View>
-      </ScrollView>
-    </>
+      </ScreenScrollView>
+    </Screen>
   );
 }

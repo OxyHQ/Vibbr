@@ -41,6 +41,7 @@ export default function RootLayout() {
       <GestureHandlerRootView style={{ flex: 1 }}>
         <BloomProvider
           defaultMode="system"
+          defaultColorPreset="yellow"
           locale={appI18n.language}
           scrollAdapter={expoRouterScrollAdapter}
           back={back}
