@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /manage/
+Disallow: /tickets/
+Disallow: /you
+
+Sitemap: https://vibbr.co/sitemap.xml

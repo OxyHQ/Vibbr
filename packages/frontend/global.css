@@ -26,3 +26,16 @@
     --radius: 1rem;
   }
 }
+
+/* Keep the document as the scroll owner, as Mention does. Expo's HTML reset sets
+   `body { overflow: hidden }` for apps that scroll inside a <ScrollView>; here the pages flow in
+   the document, so that reset would clip every screen taller than the window (a long form such
+   as /manage/new). Both axes stay visible: setting only one to auto/hidden promotes the other
+   to auto and creates an unintended body scroller. */
+html,
+body,
+#root {
+  height: 100% !important;
+  min-height: 100% !important;
+  overflow: visible !important;
+}
