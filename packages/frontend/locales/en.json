@@ -8,7 +8,8 @@
     "search": "Search",
     "tickets": "Tickets",
     "organize": "Organize",
-    "you": "You"
+    "you": "You",
+    "createEvent": "Create event"
   },
   "auth": {
     "title": "Sign in to Vibbr",
@@ -220,5 +221,8 @@
     "back": "Back",
     "loading": "Loading…",
     "free": "Free"
+  },
+  "rightBar": {
+    "upcoming": "Coming up"
   }
 }
