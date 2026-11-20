@@ -1,10 +1,12 @@
 import type { Event, OrganizerInput } from '@vibbr.co/contracts';
 import { Link, useRouter } from 'expo-router';
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Pressable, Text, View } from 'react-native';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { PageHeader } from '@oxy.so/bloom/page-header';
+import { Screen, ScreenScrollView } from '@oxy.so/bloom/screen';
 import { Button } from '@oxy.so/bloom/button';
 import { Chip } from '@oxy.so/bloom/chip';
 import {
@@ -37,7 +39,7 @@ function OrganizerForm() {
   });
   const handleOk = HANDLE.test(handle);
   return (
-    <ScrollView contentContainerClassName="mx-auto w-full max-w-[520px] gap-4 p-4">
+    <View className="mx-auto w-full max-w-[520px] gap-4">
       <Text className="text-2xl font-bold text-foreground">{t('manage.createOrganizer')}</Text>
       <SegmentedControl
         label={t('manage.organizerKind')}
@@ -86,7 +88,7 @@ function OrganizerForm() {
             : null
         }
       />
-    </ScrollView>
+    </View>
   );
 }
 
@@ -124,56 +126,48 @@ function EventRow({ event }: { event: Event }) {
 export default function Organize() {
   const { t } = useTranslation();
   const router = useRouter();
-  const insets = useSafeAreaInsets();
   const { signedIn, ready } = useViewer();
   const organizers = useMyOrganizers(signedIn);
   const organizer = organizers.data?.[0];
   const events = useManagedEvents(organizer?.id);
 
-  if (!ready) return <Loading />;
-  if (!signedIn) return <SignInPrompt />;
-  if (organizers.isPending) return <Loading />;
+  const page = (title: string, body: ReactNode, actions?: ReactNode) => (
+    <Screen header={<PageHeader title={title} actions={actions} />}>
+      <ScreenScrollView contentContainerClassName="gap-3 p-4">{body}</ScreenScrollView>
+    </Screen>
+  );
+
+  if (!ready) return page(t('tabs.organize'), <Loading />);
+  if (!signedIn) return page(t('tabs.organize'), <SignInPrompt />);
+  if (organizers.isPending) return page(t('tabs.organize'), <Loading />);
   if (organizers.isError)
-    return (
+    return page(
+      t('tabs.organize'),
       <Problem
         title={t('discover.error')}
         action={{ label: t('discover.retry'), onPress: () => void organizers.refetch() }}
-      />
+      />,
     );
-  if (!organizer)
-    return (
-      <View className="flex-1 bg-background" style={{ paddingTop: insets.top }}>
-        <OrganizerForm />
-      </View>
-    );
+  if (!organizer) return page(t('tabs.organize'), <OrganizerForm />);
 
-  return (
-    <View className="flex-1 bg-background" style={{ paddingTop: insets.top }}>
-      <View className="flex-row items-center justify-between px-4 pb-2 pt-4">
-        <Text className="text-2xl font-bold text-foreground">{organizer.name}</Text>
-        <Button
-          appearance="solid"
-          tone="accent"
-          size="sm"
-          onPress={() =>
-            router.push({ pathname: '/manage/new', params: { organizerId: organizer.id } })
-          }
-        >
-          {t('manage.newEvent')}
-        </Button>
-      </View>
-      {events.isPending ? (
-        <Loading />
-      ) : (events.data ?? []).length === 0 ? (
-        <Problem title={t('manage.empty')} />
-      ) : (
-        <FlatList
-          data={events.data}
-          keyExtractor={(e) => e.id}
-          renderItem={({ item }) => <EventRow event={item} />}
-          contentContainerStyle={{ padding: 16, paddingBottom: insets.bottom + 120 }}
-        />
-      )}
-    </View>
+  return page(
+    organizer.name,
+    events.isPending ? (
+      <Loading />
+    ) : (events.data ?? []).length === 0 ? (
+      <Problem title={t('manage.empty')} />
+    ) : (
+      events.data?.map((e) => <EventRow key={e.id} event={e} />)
+    ),
+    <Button
+      appearance="solid"
+      tone="accent"
+      size="sm"
+      onPress={() =>
+        router.push({ pathname: '/manage/new', params: { organizerId: organizer.id } })
+      }
+    >
+      {t('manage.newEvent')}
+    </Button>,
   );
 }

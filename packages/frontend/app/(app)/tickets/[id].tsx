@@ -1,10 +1,11 @@
 import { TicketId } from '@vibbr.co/contracts';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ScrollView, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Text, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
+import { PageHeader } from '@oxy.so/bloom/page-header';
+import { Screen, ScreenScrollView } from '@oxy.so/bloom/screen';
 import { Button } from '@oxy.so/bloom/button';
 import { TextField, TextFieldInput } from '@oxy.so/bloom/text-field';
 import { Loading, Problem } from '@/components/Centered';
@@ -18,7 +19,6 @@ export default function TicketScreen() {
   const raw = useLocalSearchParams<{ id: string }>().id;
   const id = TicketId.safeParse(raw).success ? (raw as string) : '';
   const { t } = useTranslation();
-  const insets = useSafeAreaInsets();
   const ticket = useQuery({
     queryKey: ['ticket', id],
     enabled: !!id,
@@ -50,12 +50,8 @@ export default function TicketScreen() {
   const minor = currency ? decimalToMinor(price, currency) : null;
 
   return (
-    <>
-      <Stack.Screen options={{ title: t('tickets.show'), headerShown: true }} />
-      <ScrollView
-        className="flex-1 bg-background"
-        contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
-      >
+    <Screen header={<PageHeader title={t('tickets.show')} />}>
+      <ScreenScrollView contentContainerClassName="pb-10">
         <View className="mx-auto w-full max-w-[520px] gap-6 p-4">
           {usable ? (
             <RotatingQr ticketId={data.id} />
@@ -154,7 +150,7 @@ export default function TicketScreen() {
             </Button>
           ) : null}
         </View>
-      </ScrollView>
-    </>
+      </ScreenScrollView>
+    </Screen>
   );
 }
