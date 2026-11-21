@@ -53,6 +53,27 @@ const SITE = 'https://vibbr.co';
 const API = 'https://api.vibbr.co/v1';
 const EVENT_PATH = /^\/e\/([A-Za-z0-9_-]+)\/?$/;
 const STATIC_PAGES = ['/', '/search'];
+const API_ORIGIN = 'https://api.vibbr.co';
+/** What remote servers ask vibbr.co for: discovery, actors, the inbox and event objects (ADR 0002). */
+const FEDERATION_PATH = /^\/(\.well-known\/(webfinger|host-meta(\.json)?)|ap\/)/;
+
+/**
+ * Hands a federation request to the API unchanged. The signature of an inbound activity covers the
+ * `host` the sender used, `vibbr.co`, so it travels as X-Forwarded-Host (the engine rebuilds the
+ * signed line from it). The API answers 404 until federation is switched on there.
+ */
+function proxyToApi(request, url) {
+  const headers = new Headers(request.headers);
+  headers.set('x-forwarded-host', url.hostname);
+  return fetch(
+    new Request(`${API_ORIGIN}${url.pathname}${url.search}`, {
+      method: request.method,
+      headers,
+      body: request.body,
+      redirect: 'manual',
+    }),
+  );
+}
 
 const SITE_TITLE = 'Vibbr: events and tickets near you';
 const SITE_DESCRIPTION =
@@ -237,6 +258,7 @@ export default {
     const extension = getExtension(pathname);
 
     if (pathname === '/sitemap.xml') return sitemap();
+    if (FEDERATION_PATH.test(pathname)) return proxyToApi(request, url);
 
     // Try the asset pipeline first.
     const assetResponse = await env.ASSETS.fetch(request);

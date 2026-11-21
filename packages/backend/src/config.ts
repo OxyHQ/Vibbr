@@ -22,6 +22,17 @@ export const config = {
   },
   /** First-party sites that may read public event data from the browser (Mention's event cards). */
   embedOrigins: ['https://mention.earth', 'https://www.mention.earth'],
+  /**
+   * ActivityPub (ADR 0002). Off unless FEDERATION_ENABLED=true: nothing federation-related is mounted
+   * before the owner turns it on, because an actor that does not resolve is worse than none.
+   */
+  federation: {
+    /** Read when asked, not at load, so the switch is the environment's and nothing caches it. */
+    get enabled(): boolean {
+      return process.env.FEDERATION_ENABLED === 'true';
+    },
+    domain: (process.env.FEDERATION_DOMAIN ?? 'vibbr.co').toLowerCase(),
+  },
   /** Minutes an unpaid online reservation holds its tickets. */
   reservationMinutes: 15,
   /** Minutes a waitlist offer holds its tickets. */
