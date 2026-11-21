@@ -472,3 +472,54 @@ export const eventStaff = pgTable(
   },
   (t) => [uniqueIndex('event_staff_event_account_key').on(t.eventId, t.oxyAccountId)],
 );
+
+/**
+ * Who follows a federated organizer (ADR 0002, slice 3): only what is needed to deliver to them, the
+ * inbox of the remote actor. No Oxy account is created for a remote follower.
+ */
+export const federationFollowers = pgTable(
+  'federation_followers',
+  {
+    id: identity(),
+    organizerId: bigint({ mode: 'number' })
+      .notNull()
+      .references(() => organizers.id, { onDelete: 'cascade' }),
+    actorUri: text().notNull(),
+    inboxUrl: text().notNull(),
+    sharedInboxUrl: text(),
+    /** The Follow's own id, echoed in the Accept so the remote server can match it. */
+    followActivityId: text().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('federation_followers_actor_key').on(t.organizerId, t.actorUri),
+    index('federation_followers_organizer_idx').on(t.organizerId),
+  ],
+);
+
+/**
+ * Activities waiting to be delivered, one row per target inbox. A durable outbox in Postgres rather
+ * than a queue service: Vibbr runs no Redis, and workers claim rows with `FOR UPDATE SKIP LOCKED`.
+ */
+export const federationOutbox = pgTable(
+  'federation_outbox',
+  {
+    id: identity(),
+    organizerId: bigint({ mode: 'number' })
+      .notNull()
+      .references(() => organizers.id, { onDelete: 'cascade' }),
+    inboxUrl: text().notNull(),
+    activity: jsonb().$type<Record<string, unknown>>().notNull(),
+    attempts: integer().notNull().default(0),
+    nextAttemptAt: instant().notNull().defaultNow(),
+    deliveredAt: instant(),
+    failedAt: instant(),
+    lastError: text(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('federation_outbox_due_idx')
+      .on(t.nextAttemptAt)
+      .where(sql`${t.deliveredAt} is null and ${t.failedAt} is null`),
+  ],
+);

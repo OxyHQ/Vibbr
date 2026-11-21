@@ -13,6 +13,7 @@ import { logger } from '../utils/logger';
 import { getPublicKey } from './keys';
 import { findFederatedOrganizer } from './organizerActor';
 import { toActivityPubEvent } from './event';
+import { fetchPublicKey, processInboxActivity } from './inbox';
 import { federationUrls } from './urls';
 
 const AP_CONTENT_TYPE = 'application/activity+json; charset=utf-8';
@@ -65,9 +66,7 @@ export function webfingerRouter(): Router {
 }
 
 /**
- * The actor document, its collections and the inbox. Slice 2 only PUBLISHES actors: the inbox
- * accepts no signed activity yet (every signature fails to resolve a key), which answers 401
- * rather than pretending to process a Follow. Slice 3 (ADR 0002) turns that on.
+ * The actor document, its collections and the inbox (Follow, Undo, Delete: see `inbox.ts`).
  */
 export function actorRouter(): Router {
   return createActorRouter({
@@ -86,11 +85,15 @@ export function actorRouter(): Router {
     }),
     getBanner: async () => null,
     inbound: {
-      fetchPublicKey: async () => null,
+      fetchPublicKey,
       trustForwardedHost: true,
+      // No queue in front of the inbox: the activities handled here are small and the work
+      // (one actor fetch, one insert) is bounded.
       enqueueInboxActivity: async () => false,
-      processInboxActivity: async () => undefined,
+      processInboxActivity,
     },
+    // The engine builds this collection from Oxy accounts; remote followers here are not accounts,
+    // so the collection reports none rather than listing people who never agreed to be listed.
     fetchFollowPage: async () => ({ members: [], total: 0, hasMore: false }),
     httpCacheTtlSeconds: 0,
     logger: log,
