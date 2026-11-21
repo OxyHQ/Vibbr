@@ -1,3 +1,5 @@
+import { config } from './config';
+import { runOutbox } from './federation/outbox';
 import { endPastEvents } from './services/catalog';
 import { expireReservations } from './services/orders';
 import { expireOffers, promoteWaitlist } from './services/waitlist';
@@ -16,6 +18,7 @@ export async function runHousekeeping(now: Date): Promise<void> {
   await promoteWaitlist(released, now);
   await expireOffers(now);
   await endPastEvents(now);
+  if (config.federation.enabled) await runOutbox(now);
 }
 
 export function startHousekeeping(): () => void {

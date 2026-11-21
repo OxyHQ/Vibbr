@@ -26,6 +26,7 @@ import {
 import { Router } from 'express';
 import { z } from 'zod';
 import type { Authority } from '../authority';
+import { federateEvent } from '../federation/publish';
 import type { PaymentProvider } from '../payments/provider';
 import {
   assertCanActForOrganizer,
@@ -175,7 +176,9 @@ export function authedRoutes({ authority, provider, clock }: AuthedDeps): Router
     route(async (req, res) => {
       const id = parse(EventId, req.params.id);
       await assertCanManageEvent(authority, req, id);
-      res.json(await patchEvent(id, parse(EventPatch, req.body)));
+      const patched = await patchEvent(id, parse(EventPatch, req.body));
+      await federateEvent(id, 'Update');
+      res.json(patched);
     }),
   );
   router.post(
@@ -183,7 +186,9 @@ export function authedRoutes({ authority, provider, clock }: AuthedDeps): Router
     route(async (req, res) => {
       const id = parse(EventId, req.params.id);
       await assertCanManageEvent(authority, req, id);
-      res.json(await publishEvent(id, parse(EventRevision, req.body).revision));
+      const published = await publishEvent(id, parse(EventRevision, req.body).revision);
+      await federateEvent(id, 'Create');
+      res.json(published);
     }),
   );
   router.post(
@@ -191,7 +196,9 @@ export function authedRoutes({ authority, provider, clock }: AuthedDeps): Router
     route(async (req, res) => {
       const id = parse(EventId, req.params.id);
       await assertCanManageEvent(authority, req, id);
-      res.json(await cancelEvent(id, clock()));
+      const cancelled = await cancelEvent(id, clock());
+      await federateEvent(id, 'Update');
+      res.json(cancelled);
     }),
   );
 
