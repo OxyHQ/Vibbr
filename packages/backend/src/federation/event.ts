@@ -30,7 +30,7 @@ export function eventObjectId({ origin }: FederationOrigin, eventId: string): st
 }
 
 export function organizerActorId({ origin }: FederationOrigin, handle: string): string {
-  return `${origin}/ap/actors/${handle}`;
+  return `${origin}/ap/users/${handle}`;
 }
 
 export interface ApEvent {

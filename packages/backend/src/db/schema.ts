@@ -69,6 +69,8 @@ export const organizers = pgTable(
     handle: text().notNull(),
     bio: text(),
     avatarUrl: text(),
+    /** Opt-in: only an organizer that chose to federate is served as an ActivityPub actor. */
+    federated: boolean().notNull().default(false),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

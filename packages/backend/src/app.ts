@@ -10,6 +10,7 @@ import { type Authority, oxyAuthority } from './authority';
 import { config } from './config';
 import { connectToDatabase } from './db';
 import { embedCors } from './middleware/embedCors';
+import { actorRouter, objectRouter, webfingerRouter } from './federation/routes';
 import { oxy } from './oxy';
 import { type PaymentProvider, resolvePaymentProvider } from './payments/provider';
 import { authedRoutes } from './routes/authed';
@@ -45,6 +46,14 @@ export function createApp(deps: AppDependencies = {}): express.Express {
     }),
   );
   app.use(express.json({ limit: '256kb' }));
+
+  // ActivityPub (ADR 0002). Mounted only when switched on: before the actors resolve, an Event whose
+  // attributedTo does not is rejected by remote servers, which is worse than not federating.
+  if (config.federation.enabled) {
+    app.use('/.well-known', webfingerRouter());
+    app.use('/ap', actorRouter());
+    app.use(objectRouter());
+  }
 
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', service: 'vibbr-backend' });

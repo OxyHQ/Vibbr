@@ -8,6 +8,13 @@
       "when": 1795031929278,
       "tag": "0000_initial_events_and_tickets",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795245149085,
+      "tag": "0001_organizer_federated",
+      "breakpoints": true
     }
   ]
 }

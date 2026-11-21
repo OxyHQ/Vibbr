@@ -52,7 +52,7 @@ describe('ActivityPub event projection', () => {
       status: 'CONFIRMED',
       joinMode: 'external',
       url: base.url,
-      attributedTo: 'https://vibbr.co/ap/actors/fado_club',
+      attributedTo: 'https://vibbr.co/ap/users/fado_club',
       location: { type: 'Place', name: 'Clube de Fado', latitude: 38.7, longitude: -9.1 },
     });
   });
