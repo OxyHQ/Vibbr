@@ -55,8 +55,8 @@ jobs:
       contents: read
       actions: read # the Seldon race guard reads this run's jobs
     timeout-minutes: 20
+    # The first step: a lane that starts after its hosted twin waits there to be cancelled (the Seldon race).
     steps: &check-steps
-      # A lane that starts after its hosted twin waits here to be cancelled (the Seldon race).
       - &race-guard
         name: Seldon race guard
         if: vars.CI_SELDON_RACE == 'true' && !endsWith(github.job, '-rescue')
@@ -219,7 +219,19 @@ jobs:
   ci-complete:
     name: CI complete
     if: always()
-    needs: [race, check, check-hosted, check-rescue, test, test-hosted, test-rescue, web, web-hosted, web-rescue]
+    needs:
+      [
+        race,
+        check,
+        check-hosted,
+        check-rescue,
+        test,
+        test-hosted,
+        test-rescue,
+        web,
+        web-hosted,
+        web-rescue,
+      ]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
