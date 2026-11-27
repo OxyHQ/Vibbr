@@ -85,7 +85,9 @@ describe.skipIf(!TEST_DATABASE_URL)('federation inbox and delivery (real Postgre
     expect(followers[0]?.organizerId).toBe(organizerId);
 
     // The Accept goes out to the follower's own inbox.
-    const now = new Date('2026-11-21T10:00:00.000Z');
+    // Relative to the real clock: the outbox rows are enqueued at the database's
+    // time, so a fixed date became a time bomb once the wall clock passed it.
+    const now = new Date(Date.now() + 60_000);
     expect(await runOutbox(now)).toBe(1);
     expect(posted).toEqual([{ inbox: `${ACTOR}/inbox`, type: 'Accept' }]);
 
