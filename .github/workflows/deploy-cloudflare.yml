@@ -38,7 +38,7 @@ jobs:
           persist-credentials: false
       # Expo SDK 58's CLI needs Node 22.13+ / 24.3+, and Wrangler 4 refuses
       # Node 20: one Node 24 serves the export and the deploy.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 24.20.0
       - uses: oven-sh/setup-bun@v2
