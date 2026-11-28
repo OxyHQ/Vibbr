@@ -21,7 +21,12 @@ export const config = {
     return 'vibbr-development-ticket-code-secret-not-for-production';
   },
   /** First-party sites that may read public event data from the browser (Mention's event cards). */
-  embedOrigins: ['https://mention.earth', 'https://www.mention.earth'],
+  embedOrigins: [
+    'https://mention.earth',
+    'https://www.mention.earth',
+    'https://mention.org',
+    'https://www.mention.org',
+  ],
   /**
    * ActivityPub (ADR 0002). Off unless FEDERATION_ENABLED=true: nothing federation-related is mounted
    * before the owner turns it on, because an actor that does not resolve is worse than none.

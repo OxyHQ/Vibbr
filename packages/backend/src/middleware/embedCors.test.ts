@@ -1,8 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import type { Request, Response } from 'express';
+import { config } from '../config';
 import { embedCors } from './embedCors';
 
-function run(method: string, origin?: string) {
+function run(
+  method: string,
+  origin?: string,
+  origins: readonly string[] = ['https://mention.earth'],
+) {
   const headers = new Map<string, string>();
   let status = 0;
   let nextCalled = false;
@@ -19,7 +24,7 @@ function run(method: string, origin?: string) {
     },
     end: () => res,
   } as unknown as Response;
-  embedCors(['https://mention.earth'])(req, res, () => {
+  embedCors(origins)(req, res, () => {
     nextCalled = true;
   });
   return { headers, status, nextCalled };
@@ -42,5 +47,20 @@ describe('embedCors', () => {
     expect(run('POST', 'https://mention.earth').headers.has('access-control-allow-origin')).toBe(
       false,
     );
+  });
+  test("the production list admits both of Mention's web hosts and no lookalike", () => {
+    for (const origin of [
+      'https://mention.earth',
+      'https://www.mention.earth',
+      'https://mention.org',
+      'https://www.mention.org',
+    ])
+      expect(
+        run('GET', origin, config.embedOrigins).headers.get('access-control-allow-origin'),
+      ).toBe(origin);
+    for (const origin of ['https://mention.org.evil.test', 'http://mention.org'])
+      expect(
+        run('GET', origin, config.embedOrigins).headers.has('access-control-allow-origin'),
+      ).toBe(false);
   });
 });
