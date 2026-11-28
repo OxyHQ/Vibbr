@@ -1,8 +1,8 @@
 # Deployment
 
-Nothing here has been applied. Each item is an action outside this repo, in order. Vibbr follows
-`~/Oxy/Schedio` (the newest app) wherever Mention differs; the infra repo is `oxy-infra`, and its
-`terraform-uswest2/*-schedio*.tf` files are the template.
+Each item is an action outside this repo, in order. The infra repo is `oxy-infra`; its Vibbr files
+(`terraform-uswest2/app-vibbr.tf`, `terraform-uswest2/iam-vibbr-deploy.tf` and
+`docs/runbooks/vibbr-launch.md`) are the reference, and the runbook records what has been applied.
 
 ## 1. Owner actions (not automatable from here)
 
@@ -17,14 +17,12 @@ Nothing here has been applied. Each item is an action outside this repo, in orde
 
 ## 2. Infra (oxy-infra, reviewed with a `terraform plan`)
 
-Phase 1 is written and committed locally on branch `feat/vibbr-infra` of `oxy-infra` (worktree
-`~/Oxy/worktrees/oxy-infra-vibbr`, one commit ahead of `origin/main`, not pushed, nothing applied): the ECR
-repository, the task and deploy roles and the `api.vibbr.co` certificate. `terraform validate`, `fmt` and the
-455 Python tests pass. The service module waits for the first image digest and is in
-`docs/runbooks/vibbr-launch.md` there.
+Both phases are on `oxy-infra` main: phase 1 is the ECR repository (`ecr.tf`), the task and deploy roles
+(`iam-vibbr-deploy.tf`) and the `api.vibbr.co` certificate; phase 2 is the ECS service in `app-vibbr.tf`,
+whose base task definition names its image by digest. The apply order is in `docs/runbooks/vibbr-launch.md`
+there.
 
-
-Per Schedio: an ECR repository and its reviewed-image pin, an ECS service and task definition (task role
+What Vibbr needs: an ECR repository and its reviewed-image pin, an ECS service and task definition (task role
 with the Oxy workload binding), an ALB host rule for `api.vibbr.co`, a deploy role for GitHub OIDC, the
 database, SSM parameters (`DATABASE_URL`, `TICKET_CODE_SECRET`), alarms, and a Workers Static Assets project
 for the web build. Mind the traps in `docs/infra-and-deploys.md` (a task definition registered but not rolled
@@ -41,7 +39,7 @@ a multi-app incident (2026-10); an own instance is the safer default unless cost
   invalidates every code in flight, which is harmless: codes live seconds and the app refetches.
 - Deploy workflows are written when the infra above exists (Mention's were removed with the copy, being tied
   to its task definitions and parameter names). Keep the smoke test: `GET /health`, then `GET /v1/events`.
-- Prelaunch like Schedio: DNS last, by the owner's choice.
+- Prelaunch: DNS last, by the owner's choice.
 
 ## 4. Online payments (later)
 

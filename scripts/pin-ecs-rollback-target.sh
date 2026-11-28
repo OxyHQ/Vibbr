@@ -7,7 +7,7 @@
 #
 # The running revision is the rollback target only when it already names its
 # image by digest. A revision that names a TAG (the base revision Terraform
-# registered, `oxy/schedio:latest`) does not identify a release: the tag moves,
+# registered, `oxy/vibbr:latest`) does not identify a release: the tag moves,
 # so rolling back to it starts whatever the tag points at by then, which can be
 # the very release being rolled back. For such a revision the target is a new
 # revision derived from it with only the image replaced by the digest its
